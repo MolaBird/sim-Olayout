@@ -1,0 +1,14 @@
+{
+  "_comment": "Vendor CAD files used to render part sprites (see README.md). 'axes' gives the CAD axis for the part's x (out of the optic's front face), y (your right when facing the optic) and z (up); 'origin_mm' is the CAD point that becomes the part origin (on the optic axis above the mounting tap). Files themselves are not committed.",
+  "KM100": {
+    "file": "KM100-E02-Step.step",
+    "axes": ["z", "x", "y"],
+    "origin_mm": [5.57, 16.33, -14.72]
+  },
+  "KM100CP": {
+    "_note": "metric KM100CP/M file: identical body, M4 instead of 8-32 taps",
+    "file": "KM100CP_M-Step.step",
+    "axes": ["-y", "-x", "-z"],
+    "origin_mm": [0.08, 0.77, -1.09]
+  }
+}

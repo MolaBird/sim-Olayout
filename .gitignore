@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+
+# Virtual environment
+.venv/
+
+# Generated at runtime: rendered part sprites, autosave, logs
+.cache/
+
+# Scratch / research downloads
+.scratch/
+
+# Optional user-supplied CAD files (vendor files, often large)
+assets/cad/*
+!assets/cad/README.md
+!assets/cad/cad_parts.json
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+.DS_Store

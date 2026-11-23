@@ -1,0 +1,241 @@
+"""The canvas view: zoom/pan, tool dispatch, drag-and-drop placement."""
+
+from __future__ import annotations
+
+import math
+
+from PySide6.QtCore import QPoint, QPointF, Qt, Signal
+from PySide6.QtGui import QKeyEvent, QMouseEvent, QPainter, QWheelEvent
+from PySide6.QtWidgets import QFrame, QGraphicsView
+
+from olayout.ui.canvas.scene import LayoutScene
+from olayout.ui.canvas.snapping import SnapSettings, Snapper
+from olayout.ui.canvas.tools import MeasureTool, PlaceTool, ProbeTool, SelectTool, Tool
+from olayout.ui.document import LayoutDocument
+
+UNIT_MIME = "application/x-olayout-unit"
+MIN_PPI, MAX_PPI = 3.0, 4000.0
+
+
+class LayoutView(QGraphicsView):
+    cursorMoved = Signal(float, float)  # model coordinates, inches
+    zoomChanged = Signal(float)  # pixels per inch
+    toolChanged = Signal(str)
+    contextMenuRequested = Signal(QPoint, object)  # global position, component id or None
+
+    def __init__(self, doc: LayoutDocument, parent=None):
+        super().__init__(parent)
+        self.doc = doc
+        self.layout_scene = LayoutScene(doc, self)
+        self.setScene(self.layout_scene)
+        self.snap_settings = SnapSettings()
+        self.snapper = Snapper(doc, self.snap_settings)
+
+        self.setRenderHints(
+            QPainter.RenderHint.Antialiasing
+            | QPainter.RenderHint.SmoothPixmapTransform
+            | QPainter.RenderHint.TextAntialiasing
+        )
+        self.setCacheMode(QGraphicsView.CacheModeFlag.CacheBackground)
+        self.setViewportUpdateMode(QGraphicsView.ViewportUpdateMode.SmartViewportUpdate)
+        self.setOptimizationFlag(QGraphicsView.OptimizationFlag.DontSavePainterState, False)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+        self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setMouseTracking(True)
+        self.setAcceptDrops(True)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+
+        self.tools: dict[str, Tool] = {
+            "select": SelectTool(self),
+            "measure": MeasureTool(self),
+            "probe": ProbeTool(self),
+        }
+        self.tool: Tool = self.tools["select"]
+        self.tool.activate()
+        self._pan_origin: QPoint | None = None
+        self._pan_button: Qt.MouseButton | None = None
+        self._pan_moved = False
+        self._space_held = False
+        self._drop_tool: PlaceTool | None = None
+        doc.layoutReset.connect(self._on_reset)
+
+    # ================================================================ tools
+    def set_tool(self, name: str, type_id: str | None = None, angle: float = 0.0) -> None:
+        self.tool.deactivate()
+        if name == "place" and type_id is not None:
+            self.tool = PlaceTool(self, type_id, angle)
+        else:
+            self.tool = self.tools.get(name, self.tools["select"])
+        self.tool.activate()
+        self.toolChanged.emit(self.tool.name)
+
+    def start_placing(self, type_id: str) -> None:
+        self.set_tool("place", type_id=type_id)
+        pos = self.mapFromGlobal(self.cursor().pos())
+        if self.viewport().rect().contains(pos):
+            _, mx, my = self.model_pos(pos)
+            self.tool.move_to(mx, my)
+
+    # =============================================================== coords
+    def pixels_per_inch(self) -> float:
+        t = self.transform()
+        return math.hypot(t.m11(), t.m12())
+
+    def model_pos(self, view_pos) -> tuple[QPointF, float, float]:
+        scene_pos = self.mapToScene(view_pos)
+        return scene_pos, scene_pos.x(), -scene_pos.y()
+
+    # ================================================================= zoom
+    def zoom_by(self, factor: float, at_cursor: bool = True) -> None:
+        current = self.pixels_per_inch()
+        factor = min(max(factor, MIN_PPI / current), MAX_PPI / current)
+        if not at_cursor:
+            self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
+        self.scale(factor, factor)
+        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+        self.zoomChanged.emit(self.pixels_per_inch())
+
+    def fit_board(self) -> None:
+        rect = self.layout_scene.board_rect().adjusted(-1.2, -1.2, 1.2, 1.2)
+        self.fitInView(rect, Qt.AspectRatioMode.KeepAspectRatio)
+        self.zoomChanged.emit(self.pixels_per_inch())
+
+    def center_on_model(self, x: float, y: float) -> None:
+        self.centerOn(QPointF(x, -y))
+
+    def _on_reset(self) -> None:
+        self.resetCachedContent()
+        self.viewport().update()
+
+    # ================================================================ input
+    def wheelEvent(self, ev: QWheelEvent) -> None:  # noqa: N802
+        delta = ev.angleDelta().y() or ev.angleDelta().x()
+        if delta == 0:
+            return
+        mods = ev.modifiers()
+        if mods & Qt.KeyboardModifier.ControlModifier:
+            step = 1.0 if mods & Qt.KeyboardModifier.ShiftModifier else 5.0
+            self.rotate_selection(step * (1 if delta > 0 else -1))
+            return
+        if mods & Qt.KeyboardModifier.ShiftModifier:
+            bar = self.horizontalScrollBar()
+            bar.setValue(bar.value() - delta)
+            return
+        self.zoom_by(1.0015 ** delta)
+
+    def rotate_selection(self, delta: float) -> None:
+        if isinstance(self.tool, PlaceTool):
+            self.tool.rotate(delta)
+            return
+        poses = {c.id: (c.x, c.y, c.angle + delta) for c in self.doc.selected_components()}
+        if poses:
+            self.doc.transform_components(poses, "Rotate")
+
+    def _begin_pan(self, ev: QMouseEvent) -> None:
+        self._pan_origin = ev.position().toPoint()
+        self._pan_button = ev.button()
+        self._pan_moved = False
+        self.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
+
+    def mousePressEvent(self, ev: QMouseEvent) -> None:  # noqa: N802
+        self.setFocus()
+        button = ev.button()
+        if button == Qt.MouseButton.MiddleButton or (button == Qt.MouseButton.LeftButton and self._space_held):
+            self._begin_pan(ev)
+            return
+        if button == Qt.MouseButton.RightButton and not isinstance(self.tool, PlaceTool):
+            self._begin_pan(ev)
+            return
+        scene_pos, mx, my = self.model_pos(ev.position().toPoint())
+        self.tool.press(ev, scene_pos, mx, my)
+
+    def mouseMoveEvent(self, ev: QMouseEvent) -> None:  # noqa: N802
+        if self._pan_origin is not None:
+            pos = ev.position().toPoint()
+            delta = pos - self._pan_origin
+            if abs(delta.x()) + abs(delta.y()) > 2:
+                self._pan_moved = True
+            self._pan_origin = pos
+            self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - delta.x())
+            self.verticalScrollBar().setValue(self.verticalScrollBar().value() - delta.y())
+            return
+        scene_pos, mx, my = self.model_pos(ev.position().toPoint())
+        self.cursorMoved.emit(mx, my)
+        self.tool.move(ev, scene_pos, mx, my)
+
+    def mouseReleaseEvent(self, ev: QMouseEvent) -> None:  # noqa: N802
+        if self._pan_origin is not None and ev.button() == self._pan_button:
+            was_click = not self._pan_moved and ev.button() == Qt.MouseButton.RightButton
+            self._pan_origin = None
+            self._pan_button = None
+            self.tool.activate()
+            if was_click:
+                scene_pos, _, _ = self.model_pos(ev.position().toPoint())
+                comp_id = self.layout_scene.component_at(scene_pos)
+                if comp_id is not None and comp_id not in self.doc.selection:
+                    self.doc.set_selection([comp_id])
+                self.contextMenuRequested.emit(ev.globalPosition().toPoint(), comp_id)
+            return
+        scene_pos, mx, my = self.model_pos(ev.position().toPoint())
+        self.tool.release(ev, scene_pos, mx, my)
+
+    def mouseDoubleClickEvent(self, ev: QMouseEvent) -> None:  # noqa: N802
+        self.mousePressEvent(ev)
+
+    def keyPressEvent(self, ev: QKeyEvent) -> None:  # noqa: N802
+        if ev.key() == Qt.Key.Key_Space and not ev.isAutoRepeat():
+            self._space_held = True
+            self.viewport().setCursor(Qt.CursorShape.OpenHandCursor)
+            return
+        if self.tool.key_press(ev):
+            return
+        super().keyPressEvent(ev)
+
+    def keyReleaseEvent(self, ev: QKeyEvent) -> None:  # noqa: N802
+        if ev.key() == Qt.Key.Key_Space and not ev.isAutoRepeat():
+            self._space_held = False
+            self.tool.activate()
+            return
+        super().keyReleaseEvent(ev)
+
+    def leaveEvent(self, ev) -> None:  # noqa: N802
+        self.tool.leave()
+        super().leaveEvent(ev)
+
+    # ========================================================= drag & drop
+    def dragEnterEvent(self, ev) -> None:  # noqa: N802
+        if not ev.mimeData().hasFormat(UNIT_MIME):
+            ev.ignore()
+            return
+        type_id = bytes(ev.mimeData().data(UNIT_MIME)).decode()
+        self._drop_tool = PlaceTool(self, type_id)
+        self._drop_tool.activate()
+        ev.acceptProposedAction()
+
+    def dragMoveEvent(self, ev) -> None:  # noqa: N802
+        if self._drop_tool is None:
+            ev.ignore()
+            return
+        _, mx, my = self.model_pos(ev.position().toPoint())
+        self._drop_tool.move_to(mx, my, ev.modifiers())
+        ev.acceptProposedAction()
+
+    def dragLeaveEvent(self, ev) -> None:  # noqa: N802
+        if self._drop_tool is not None:
+            self._drop_tool.deactivate()
+            self._drop_tool = None
+
+    def dropEvent(self, ev) -> None:  # noqa: N802
+        tool, self._drop_tool = self._drop_tool, None
+        if tool is None:
+            ev.ignore()
+            return
+        _, mx, my = self.model_pos(ev.position().toPoint())
+        tool.move_to(mx, my, ev.modifiers())
+        tool.place()
+        tool.deactivate()
+        ev.acceptProposedAction()
+        self.setFocus()

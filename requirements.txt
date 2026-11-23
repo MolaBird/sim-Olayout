@@ -1,0 +1,12 @@
+# Runtime
+PySide6-Essentials>=6.6
+numpy>=1.26
+shapely>=2.0
+
+# Optional: render vendor STEP files into part sprites (see assets/cad/README.md)
+trimesh>=4.0
+cascadio>=0.0.13
+
+# Development / tests
+pytest>=8.0
+pytest-qt>=4.4

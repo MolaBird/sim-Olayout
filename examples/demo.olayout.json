@@ -1,0 +1,234 @@
+{
+  "format": "olayout",
+  "version": 1,
+  "units": "inch",
+  "breadboard": {
+    "width": 24,
+    "height": 18,
+    "pitch": 1.0,
+    "margin": 0.5,
+    "hole_diameter": 0.25,
+    "name": "MB1824"
+  },
+  "components": [
+    {
+      "id": "c1",
+      "type": "collimator",
+      "x": 1.5,
+      "y": 2.5,
+      "angle": 0.0,
+      "label": "FC1",
+      "params": {
+        "source": {
+          "enabled": true,
+          "wavelength_nm": 780.0,
+          "mfd_um": 5.0,
+          "power_mw": 1.0
+        },
+        "lens": {
+          "focal_length_mm": 35.0,
+          "distance_mm": 35.0
+        }
+      }
+    },
+    {
+      "id": "c2",
+      "type": "km-mirror",
+      "x": 7.9039,
+      "y": 2.0961,
+      "angle": 135.0,
+      "label": "M1",
+      "params": {
+        "optic": {
+          "kind": "mirror",
+          "roc_mm": 0.0,
+          "focal_length_mm": 100.0,
+          "reflectance": 0.5,
+          "transmittance": 1.0,
+          "thickness_mm": null
+        },
+        "fork": {
+          "angle": null
+        }
+      }
+    },
+    {
+      "id": "c3",
+      "type": "mag-km-pellicle",
+      "x": 6.9272,
+      "y": 9.0021,
+      "angle": 315.0,
+      "label": "BS1",
+      "orientation": "side",
+      "params": {
+        "optic": {
+          "kind": "splitter",
+          "roc_mm": 0.0,
+          "focal_length_mm": 100.0,
+          "reflectance": 0.45,
+          "transmittance": 1.0
+        },
+        "fork": {
+          "angle": null
+        }
+      }
+    },
+    {
+      "id": "c4",
+      "type": "lens",
+      "x": 11.9937,
+      "y": 8.5,
+      "angle": 180.0,
+      "label": "L1",
+      "params": {
+        "optic": {
+          "kind": "lens",
+          "roc_mm": 0.0,
+          "focal_length_mm": 200.0,
+          "reflectance": 0.5,
+          "transmittance": 1.0,
+          "thickness_mm": null
+        },
+        "fork": {
+          "angle": null
+        }
+      }
+    },
+    {
+      "id": "c5",
+      "type": "km-h-mirror",
+      "x": 21.5,
+      "y": 8.5,
+      "angle": 225.0,
+      "label": "M2",
+      "params": {
+        "optic": {
+          "kind": "mirror",
+          "roc_mm": 0.0,
+          "focal_length_mm": 100.0,
+          "reflectance": 0.5,
+          "transmittance": 1.0,
+          "thickness_mm": null
+        }
+      }
+    },
+    {
+      "id": "c6",
+      "type": "km-h-mirror",
+      "x": 7.5,
+      "y": 14.5,
+      "angle": 225.0,
+      "label": "M3",
+      "params": {
+        "optic": {
+          "kind": "mirror",
+          "roc_mm": 0.0,
+          "focal_length_mm": 100.0,
+          "reflectance": 0.5,
+          "transmittance": 1.0,
+          "thickness_mm": null
+        }
+      }
+    },
+    {
+      "id": "c7",
+      "type": "h-lens",
+      "x": 4.5,
+      "y": 14.5,
+      "angle": 0.0,
+      "label": "L2",
+      "params": {
+        "optic": {
+          "kind": "lens",
+          "roc_mm": 0.0,
+          "focal_length_mm": 75.0,
+          "reflectance": 0.5,
+          "transmittance": 1.0,
+          "thickness_mm": null
+        }
+      }
+    },
+    {
+      "id": "c8",
+      "type": "laser",
+      "x": 1.0,
+      "y": 16.5,
+      "angle": 0.0,
+      "label": "S1",
+      "params": {
+        "enabled": true,
+        "wavelength_nm": 633.0,
+        "waist_um": 400.0,
+        "waist_distance_in": 0.0,
+        "m2": 1.0,
+        "power_mw": 2.0
+      }
+    },
+    {
+      "id": "c9",
+      "type": "mirror",
+      "x": 17.1069,
+      "y": 16.6069,
+      "angle": 225.0,
+      "label": "M4",
+      "params": {
+        "optic": {
+          "kind": "mirror",
+          "roc_mm": 0.0,
+          "focal_length_mm": 100.0,
+          "reflectance": 0.5,
+          "transmittance": 1.0,
+          "thickness_mm": null
+        },
+        "fork": {
+          "angle": null
+        }
+      }
+    }
+  ],
+  "measurements": [
+    {
+      "id": "m1",
+      "a": [
+        7.5,
+        2.5
+      ],
+      "b": [
+        7.5,
+        8.5
+      ]
+    },
+    {
+      "id": "m2",
+      "a": [
+        12.0,
+        8.5
+      ],
+      "b": [
+        21.5,
+        8.5
+      ]
+    }
+  ],
+  "probes": [
+    {
+      "id": "p1",
+      "x": 4.2059,
+      "y": 2.5,
+      "label": "P1"
+    },
+    {
+      "id": "p2",
+      "x": 19.8741,
+      "y": 8.5,
+      "label": "P2"
+    },
+    {
+      "id": "p3",
+      "x": 1.5409,
+      "y": 14.5,
+      "label": "P3"
+    }
+  ],
+  "notes": "Demo: a 780 nm fiber collimator feeds a kinematic fold mirror and a pellicle beamsplitter. The reflected arm is focused by a 200 mm lens and folded down; the transmitted arm is folded by a post-centred KM100CP and focused by a 75 mm lens. Probes sit near the foci."
+}
