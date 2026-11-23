@@ -9,10 +9,12 @@ Part frames
 * Base-layer parts (post holders, pedestal adapters, clamping forks): origin
   on the table surface at the post axis, z up.
 
-Dimensions are inches from archived Thorlabs mechanical drawings (KM100
-rev C, KM100CP, KM100BP, FMP1/M, CP33/CP35, PH1/PH4, TS25H, CF125C, TR2,
-MB1224).  Hidden internals are simplified; values not on a drawing are
-marked "estimate".
+Dimensions are inches from Thorlabs mechanical drawings (KM100 rev C,
+KM100CP, KM100BP rev A, FMP1/M, CP33/CP35, SM1ZB rev B, PH1/PH4, TS25H,
+CF125C, TR2, MB1224), checked against the vendor STEP files registered in
+``assets/cad/cad_parts.json`` (cross-sections at beam height and overlays of
+the top-view silhouettes).  Hidden internals are simplified; values not on
+a drawing or in a STEP file are marked "estimate".
 """
 
 from __future__ import annotations
@@ -46,12 +48,18 @@ class Layer(str, Enum):
 
 @dataclass(frozen=True)
 class MountingTap:
-    """A tapped (or #8 clearance) hole a post or adapter attaches to."""
+    """A tapped (or #8 clearance) hole a post or adapter attaches to.
+
+    ``yaw`` (0 or 180) additionally turns the part end-for-end about the
+    post, for parts that work facing either way (e.g. the SM1ZB, whose
+    fiber can enter from either face).
+    """
 
     name: str
     label: str
     position: Vec3  # centre of the hole on the part's face (part frame)
     normal: Vec3  # outward normal of that face, axis-aligned
+    yaw: int = 0
 
 
 @dataclass(frozen=True)
@@ -110,9 +118,10 @@ class PartSpec:
         raise KeyError(f"{self.id} has no tap named {name!r}")
 
     def oriented(self, tap_name: str | None = None) -> OrientedPart:
-        """Roll the part about its optic axis so ``tap_name`` faces the post."""
+        """Roll the part about its optic axis so ``tap_name`` faces the post
+        (then turn it end-for-end if the tap asks for it)."""
         tap = self.tap(tap_name)
-        rot = roll_bringing_down(tap.normal)
+        rot = rotation_matrix("z", tap.yaw) @ roll_bringing_down(tap.normal)
         pos = rot @ np.asarray(tap.position, dtype=float)
         return OrientedPart(
             prims=transform_all(self.prims, rot),
@@ -145,7 +154,7 @@ KM_PLATE_Y = (-0.965, 0.95)  # front plate, relative to the optic centre
 KM_BACK_Y = (-0.965, 1.00)  # back plate (its +y face carries the side hole)
 KM_PLATE_Z = (-1.00, 0.97)  # plates are 1.97" tall, optic 1.00" above the bottom
 KM_KNOBS = ((0.735, 0.75), (-0.75, -0.735))  # (y, z) of the two adjusters
-KM_BACK_BORE_R = 0.35  # estimate: through-hole in the back plate
+KM_BACK_ARM = 0.48  # the back plate is an L: 0.48" arms along the bottom and the +y side
 
 
 def _adjuster(y: float, z: float, x_back: float) -> list[Primitive]:
@@ -158,36 +167,52 @@ def _adjuster(y: float, z: float, x_back: float) -> list[Primitive]:
     ]
 
 
-def _kinematic_body(
-    *, front_x: tuple[float, float], back_x: tuple[float, float], dy: float = 0.0, dz: float = 0.0
+def _l_plate(
+    x: tuple[float, float], y: tuple[float, float], z: tuple[float, float], arm: float, material: str
 ) -> list[Primitive]:
-    """Front plate, back plate, linking web and adjusters (bores added by callers).
+    """An L-shaped plate: one arm along the bottom, one up the +y side.
 
-    ``dy, dz`` shift the plates relative to the optic centre (KM100BP).
+    The region around the optic axis stays open, so beams transmitted through
+    a beamsplitter can leave the mount (unless they walk into the side arm).
     """
-    fy = (KM_PLATE_Y[0] + dy, KM_PLATE_Y[1] + dy)
-    by = (KM_BACK_Y[0] + dy, KM_BACK_Y[1] + dy)
-    pz = (KM_PLATE_Z[0] + dz, KM_PLATE_Z[1] + dz)
-    prims: list[Primitive] = [
-        Box((front_x[0], fy[0], pz[0]), (front_x[1], fy[1], pz[1]), "anodized"),
-        Box((back_x[0], by[0], pz[0]), (back_x[1], by[1], pz[1]), "anodized_light"),
-        # Springs and the pivot ball live in the gap; a low web keeps it one body.
-        Box((back_x[1] - 0.01, fy[0] + 0.12, pz[0] + 0.1), (front_x[0] + 0.01, fy[1] - 0.12, pz[0] + 0.25), "anodized"),
+    return [
+        Box((x[0], y[0], z[0]), (x[1], y[1], z[0] + arm), material),  # bottom arm
+        Box((x[0], y[1] - arm, z[0]), (x[1], y[1], z[1]), material),  # +y side arm
     ]
-    for y, z in KM_KNOBS:
-        prims += _adjuster(y + dy, z + dz, back_x[0])
+
+
+def _kinematic_body(
+    *,
+    front: list[Primitive],
+    back_x: tuple[float, float],
+    back_y: tuple[float, float] = KM_BACK_Y,
+    plate_z: tuple[float, float] = KM_PLATE_Z,
+    back_arm: float = KM_BACK_ARM,
+    front_x0: float,
+    knobs: tuple[tuple[float, float], ...] = KM_KNOBS,
+) -> list[Primitive]:
+    """Front plate (given) + L-shaped back plate + springs + adjusters."""
+    prims: list[Primitive] = list(front)
+    prims += _l_plate(back_x, back_y, plate_z, back_arm, "anodized_light")
+    # Springs and the pivot ball sit at the corner of the L; a low web keeps it one body.
+    prims.append(
+        Box((back_x[1] - 0.01, back_y[1] - back_arm + 0.05, plate_z[0] + 0.05),
+            (front_x0 + 0.01, back_y[1] - 0.05, plate_z[0] + back_arm - 0.05), "anodized")
+    )
+    for y, z in knobs:
+        prims += _adjuster(y, z, back_x[0])
     return prims
 
 
 def make_km100() -> PartSpec:
-    # Rev C: main face at x=0.58 (pads 0.63), front plate back at 0.30, 0.10"
-    # gap, back plate -0.20..0.20; the #8 holes are mid back plate.
-    prims = _kinematic_body(front_x=(0.30, 0.58), back_x=(-0.20, 0.20))
-    prims += [
+    # Rev C + STEP: main face at x=0.58 (pads 0.63), front plate back at 0.30,
+    # 0.10" gap, L-shaped back plate -0.20..0.20; the #8 holes are mid back plate.
+    front = [
+        Box((0.30, KM_PLATE_Y[0], KM_PLATE_Z[0]), (0.58, KM_PLATE_Y[1], KM_PLATE_Z[1]), "anodized"),
         Bore("x", (0.46, 0.0, 0.0), 0.50, 0.30),  # Ø1" seat, 0.245" deep
         Bore("x", (0.31, 0.0, 0.0), 0.47, 0.07),  # rear lip, Ø0.94 clear aperture
-        Bore("x", (0.0, 0.0, 0.0), KM_BACK_BORE_R, 0.5),
     ]
+    prims = _kinematic_body(front=front, back_x=(-0.20, 0.20), front_x0=0.30)
     taps = (
         MountingTap("bottom", "Upright (bottom hole)", (0.0, 0.0, KM_PLATE_Z[0]), (0, 0, -1)),
         MountingTap("side", "On its side (side hole, mirrored)", (0.0, KM_BACK_Y[1], 0.0), (0, 1, 0)),
@@ -207,14 +232,19 @@ def make_km100cp() -> PartSpec:
     """Post-centred KM100: both tap axes pass through the mirror's front surface.
 
     Origin = mirror front-surface centre; rear-loaded cell with a ~0.08" lip.
+    At beam height the front plate only spans y -0.61..0.83 (STEP section).
     """
-    prims = _kinematic_body(front_x=(-0.20, 0.08), back_x=(-0.70, -0.30))
-    prims += [
-        Box((-0.70, -0.375, -1.25), (0.20, 0.375, KM_PLATE_Z[0]), "anodized_light"),  # foot
-        Box((-0.45, 1.00, -1.25), (0.20, 1.25, 0.30), "anodized_light"),  # side ear (height estimate)
+    front = [
+        Box((-0.20, KM_PLATE_Y[0], 0.35), (0.08, KM_PLATE_Y[1], KM_PLATE_Z[1]), "anodized"),
+        Box((-0.20, -0.61, -0.35), (0.08, 0.825, 0.35), "anodized"),
+        Box((-0.20, KM_PLATE_Y[0], KM_PLATE_Z[0]), (0.08, KM_PLATE_Y[1], -0.35), "anodized"),
         Bore("x", (-0.10, 0.0, 0.0), 0.50, 0.22),  # Ø1" cell, 0.20" deep
         Bore("x", (0.04, 0.0, 0.0), 0.47, 0.12),  # front lip, Ø0.94 clear aperture
-        Bore("x", (-0.50, 0.0, 0.0), KM_BACK_BORE_R, 0.5),
+    ]
+    prims = _kinematic_body(front=front, back_x=(-0.70, -0.30), back_arm=0.41, front_x0=-0.20)
+    prims += [
+        Box((-0.70, -0.375, -1.25), (0.20, 0.375, KM_PLATE_Z[0]), "anodized_light"),  # foot
+        Box((-0.58, 1.00, -0.375), (0.20, 1.25, 0.375), "anodized_light"),  # side ear with the 8-32 tap
     ]
     taps = (
         MountingTap("bottom", "Upright (foot tap)", (0.0, 0.0, -1.25), (0, 0, -1)),
@@ -231,35 +261,28 @@ def make_km100cp() -> PartSpec:
     )
 
 
-PELLICLE_PLANE_X = 0.76  # estimate: membrane on the front of the BP1xx frame
-
-
-KM100BP_ARM = 0.43  # width of the L-shaped plates' arms (estimate from the drawing)
+KM100BP_FRONT_X = 0.58  # front face of the KM100BP, where the pellicle frame mounts
+BP1XX_FRAME_T = 0.18  # estimate: BP1xx frame thickness
+PELLICLE_PLANE_X = KM100BP_FRONT_X + BP1XX_FRAME_T  # the membrane, where the beam hits
 
 
 def make_km100bp() -> PartSpec:
-    """L-shaped kinematic mount for BP1xx pellicles (KM100BP drawing, rev A).
+    """L-shaped kinematic mount for BP1xx pellicles (KM100BP drawing rev A + STEP).
 
-    Both plates are L-brackets along the +y side and the bottom, so the
-    region around the beam is open and a 45° transmitted beam passes.  The
+    Both plates are L-brackets along the +y side and the bottom (front arms
+    0.31" wide, back arms 0.48"), so the region around the beam is open.  The
     pellicle centre is 1.05" from the bottom and from the +y face; the #8
-    holes are 1.00" from those faces.  Plate depths match the KM100.
+    holes are 1.00" from those faces.  The pellicle itself is the separate
+    BP1XX part (its frame screws to the front face).
     """
-    y_out, z_low = 1.05, -1.05  # outer +y face and bottom face
-    y_in, z_top = y_out - 0.05 - 1.97, z_low + 1.97  # far ends of the arms
-    arm = KM100BP_ARM
-    prims: list[Primitive] = []
-    for (x0, x1), material in (((0.30, 0.63), "anodized"), ((-0.20, 0.20), "anodized_light")):
-        prims.append(Box((x0, y_out - arm, z_low), (x1, y_out, z_top), material))  # vertical arm (+y side)
-        prims.append(Box((x0, y_in, z_low), (x1, y_out, z_low + arm), material))  # bottom arm
-    # Web between the plates (springs / pivot) at the corner of the L.
-    prims.append(Box((0.19, y_out - arm + 0.05, z_low + 0.05), (0.31, y_out - 0.05, z_low + arm - 0.05), "anodized"))
-    for y, z in ((0.785, 0.70), (-0.70, -0.785)):  # adjusters at the ends of the arms
-        prims += _adjuster(y, z, -0.20)
-    prims += [
-        Cylinder("x", (0.70, 0.0, 0.0), 0.69, 0.14, "anodized"),  # BP1xx frame (Ø1.38") on the front face
-        Bore("x", (0.70, 0.0, 0.0), 0.50, 0.30),
-    ]
+    y_out, z_low = 1.05, -1.05  # back plate's outer +y face and bottom face
+    z_top = z_low + 1.97
+    back_y = (y_out - 1.97, y_out)
+    front = _l_plate((0.29, KM100BP_FRONT_X), (back_y[0] + 0.03, y_out - 0.05), (z_low, z_top - 0.03), 0.31, "anodized")
+    knobs = ((0.785, 0.70), (-0.70, -0.785))  # at the ends of the arms
+    prims = _kinematic_body(
+        front=front, back_x=(-0.20, 0.20), back_y=back_y, plate_z=(z_low, z_top), front_x0=0.29, knobs=knobs
+    )
     taps = (
         MountingTap("bottom", "Upright (bottom hole)", (0.0, y_out - 1.00, z_low), (0, 0, -1)),
         MountingTap("side", "On its side (side hole, mirrored)", (0.0, y_out, z_low + 1.00), (0, 1, 0)),
@@ -272,6 +295,26 @@ def make_km100bp() -> PartSpec:
         taps=taps,
         optic_slot=OpticSlot(seat_x=PELLICLE_PLANE_X, loading="centered", clear_aperture=0.90),
         description="Kinematic mount for Ø1\" BP1xx pellicle beamsplitters.",
+    )
+
+
+def make_bp1xx() -> PartSpec:
+    """BP1xx pellicle beamsplitter: Ø1.38" frame, membrane on its front face.
+
+    Origin = membrane centre; the frame extends behind it (toward -x), onto
+    the KM100BP's front face.  The beam is normally incident on the membrane side.
+    """
+    t = BP1XX_FRAME_T
+    prims = (
+        Cylinder("x", (-t / 2, 0.0, 0.0), 0.69, t, "anodized"),
+        Bore("x", (-t / 2, 0.0, 0.0), 0.50, t + 0.1),  # Ø1" membrane aperture
+    )
+    return PartSpec(
+        id="BP1XX",
+        name='BP1xx pellicle beamsplitter, Ø1"',
+        layer=Layer.OPTIC,
+        prims=prims,
+        description="Pellicle membrane stretched over a Ø1.38\" frame.",
     )
 
 
@@ -343,34 +386,43 @@ def make_cp35() -> PartSpec:
     )
 
 
-def make_sm1zb() -> PartSpec:
-    """SM1 z-axis translator for 30 mm cage systems, post-mountable (approximate).
+SM1ZB_PLATE_HALF_T = 0.22  # 0.44" cage plate
+SM1ZB_HOUSING_BACK = -0.58  # the 0.80"-deep translation housing behind the lower plate
+SM1ZB_FIBER_X = 0.20  # estimate: fiber tip of an SM1-threaded adapter near the front face
+SM1ZB_CARRIAGE_X = 0.32  # front of the SM1 carriage (sticks out 0.02-0.10")
 
-    No archived Thorlabs drawing exists for "SM1ZB"; this follows the SM1ZA
-    (cage-compatible) with SM1ZP-style post taps.  Origin: optic axis at the
-    front (cage-rod) face.
+
+def make_sm1zb() -> PartSpec:
+    """SM1ZB z-axis translator for 30 mm cage systems (drawing rev B, 2025).
+
+    Drawn as in the vendor drawing (housing and knob at the bottom): a 0.44"
+    cage plate (1.60" wide, 2.12" across the knob side below the axis) with an
+    SM1-threaded carriage (Ø0.90" clear aperture), a 0.80"-deep housing behind
+    the lower half and the graduated adjuster knob.  Origin: optic axis at
+    mid-plate.  Its only 8-32 hole is in the *top* edge, so on a post the part
+    hangs inverted with the knob on top.
     """
-    size, body_t = 1.60, 0.50
-    half = size / 2
-    ring_r, ring_t = 0.80, 0.30
+    t = SM1ZB_PLATE_HALF_T
     prims: list[Primitive] = [
-        Box((-body_t, -half, -half), (0.0, half, half), "anodized"),
-        Cylinder("x", (-body_t - ring_t / 2, 0.0, 0.0), ring_r, ring_t, "anodized_light", knurled=True),
-        Cylinder("x", (-body_t - ring_t - 0.20, 0.0, 0.0), 0.56, 0.40, "anodized"),  # SM1 tube
-        Bore("x", (-0.5, 0.0, 0.0), 0.45, 1.6),
+        Box((-t, -0.80, -0.45), (t, 0.80, 1.25), "anodized"),  # cage plate around the optic
+        Box((-t, -1.32, -1.60), (t, 0.80, -0.45), "anodized"),  # lower plate, wider on the knob side
+        Box((SM1ZB_HOUSING_BACK, -1.32, -1.58), (-t, 0.80, -0.40), "anodized_light"),  # translation housing
+        Cylinder("x", (t + 0.05, 0.0, 0.0), 0.60, 0.10, "anodized_light"),  # SM1 carriage
+        Cylinder("x", (-0.91, -1.02, -1.32), 0.26, 0.68, "steel_dark"),  # graduated barrel
+        Cylinder("x", (-1.48, -1.02, -1.32), 0.345, 0.46, "knob", knurled=True),  # adjuster knob
+        Bore("x", (0.0, 0.0, 0.0), 0.45, 1.2),  # Ø0.90" clear aperture
     ]
     taps = (
-        MountingTap("bottom", "Upright (bottom tap)", (-body_t / 2, 0.0, -half), (0, 0, -1)),
-        MountingTap("side", "On its side (side tap)", (-body_t / 2, half, 0.0), (0, 1, 0)),
-        MountingTap("top", "Upside down (top tap)", (-body_t / 2, 0.0, half), (0, 0, 1)),
+        MountingTap("top", "Housing toward the fiber (knob up)", (0.0, 0.0, 1.25), (0, 0, 1)),
+        MountingTap("top-flipped", "Housing toward the lens (knob up)", (0.0, 0.0, 1.25), (0, 0, 1), yaw=180),
     )
     return PartSpec(
         id="SM1ZB",
-        name="SM1ZB z-axis translation mount (30 mm cage)",
+        name="SM1ZB z-axis translator (30 mm cage)",
         layer=Layer.OPTIC,
         prims=tuple(prims),
         taps=taps,
-        description="SM1 z-translation mount for 30 mm cage systems (approximate model); holds the fiber adapter.",
+        description="SM1-threaded z-axis translator for 30 mm cage systems; holds the fiber adapter.",
     )
 
 
@@ -383,11 +435,18 @@ def make_fiber_connector() -> PartSpec:
     return PartSpec(id="FIBER", name="FC/PC fiber connector", layer=Layer.OPTIC, prims=prims)
 
 
-def make_cage_rod() -> PartSpec:
-    """Four Ø6 mm cage rods, 1" long (stretched along x when drawn)."""
-    c = CAGE_SPACING / 2
-    prims = tuple(Cylinder("x", (-0.5, y, z), CAGE_ROD_RADIUS, 1.0, "steel") for y in (-c, c) for z in (-c, c))
-    return PartSpec(id="ER", name="ER cage rods (30 mm)", layer=Layer.OPTIC, prims=prims)
+ER15_LENGTH = 1.5  # ER1.5 rod body; 0.1" studs at both ends
+
+
+def make_er15() -> PartSpec:
+    """One ER1.5 cage rod (Ø6 mm, 1.5" body) along x, centred on its origin."""
+    half = ER15_LENGTH / 2
+    prims = (
+        Cylinder("x", (0.0, 0.0, 0.0), CAGE_ROD_RADIUS, ER15_LENGTH, "steel"),
+        Cylinder("x", (half + 0.05, 0.0, 0.0), 0.05, 0.10, "steel_dark"),
+        Cylinder("x", (-half - 0.05, 0.0, 0.0), 0.05, 0.10, "steel_dark"),
+    )
+    return PartSpec(id="ER1.5", name='ER1.5 cage rod, 1.5"', layer=Layer.OPTIC, prims=prims)
 
 
 # ==========================================================================
@@ -397,7 +456,7 @@ PH2_BODY_R = 0.49  # Ø0.98" body, no flange
 PH2_HEIGHT = 2.00
 PH2_THUMBSCREW_Z = 1.50  # 0.50" below the top
 BE1_R = 0.625  # Ø1.25"
-BE1_HEIGHT = 0.19  # estimate (not on a drawing)
+BE1_HEIGHT = 0.185  # disc height (from the BE1 STEP; the 1/4"-20 stud hides inside the PH2)
 
 
 def make_ph2(z_base: float = 0.0, part_id: str = "PH2") -> PartSpec:
@@ -515,12 +574,13 @@ def _build_registry() -> dict[str, PartSpec]:
         make_km100(),
         make_km100cp(),
         make_km100bp(),
+        make_bp1xx(),
         make_fmp1(),
         make_kb1x1(),
         make_cp35(),
         make_sm1zb(),
         make_fiber_connector(),
-        make_cage_rod(),
+        make_er15(),
         make_ph2(),
         make_ph2(z_base=BE1_HEIGHT, part_id="PH2@BE1"),  # PH2 standing on a BE1
         make_be1(),

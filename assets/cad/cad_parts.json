@@ -1,14 +1,84 @@
 {
-  "_comment": "Vendor CAD files used to render part sprites (see README.md). 'axes' gives the CAD axis for the part's x (out of the optic's front face), y (your right when facing the optic) and z (up); 'origin_mm' is the CAD point that becomes the part origin (on the optic axis above the mounting tap). Files themselves are not committed.",
+  "_comment": "Vendor CAD files used to render part sprites (see README.md). 'axes' gives the CAD axis for the part's x (out of the optic's front face), y (your right when facing the optic) and z (up); 'origin_mm' is the CAD point that becomes the part origin. Alignments were measured from each file's mounting holes and bores. 'material' (optional) replaces the file's colours with a renderer material, since Thorlabs STEP files are single-colour. The STEP files themselves are not committed.",
   "KM100": {
     "file": "KM100-E02-Step.step",
     "axes": ["z", "x", "y"],
-    "origin_mm": [5.57, 16.33, -14.72]
+    "origin_mm": [5.57, 16.33, -14.72],
+    "material": "anodized"
   },
   "KM100CP": {
     "_note": "metric KM100CP/M file: identical body, M4 instead of 8-32 taps",
     "file": "KM100CP_M-Step.step",
     "axes": ["-y", "-x", "-z"],
-    "origin_mm": [0.08, 0.77, -1.09]
+    "origin_mm": [0.08, 0.77, -1.09],
+    "material": "anodized"
+  },
+  "KM100BP": {
+    "_note": "origin: pellicle axis (1.05in from the bottom and the +x face) above the bottom #8 hole",
+    "file": "KM100BP-Step.step",
+    "axes": ["z", "x", "y"],
+    "origin_mm": [-22.03, 31.50, -26.60],
+    "material": "anodized"
+  },
+  "FMP1": {
+    "file": "FMP1-Step.step",
+    "axes": ["z", "x", "y"],
+    "origin_mm": [0.0, 0.0, -3.175],
+    "material": "anodized"
+  },
+  "KB1X1": {
+    "_note": "origin: centre of the top face",
+    "file": "KB1X1-Step.step",
+    "axes": ["x", "-z", "y"],
+    "origin_mm": [9.28, 22.79, 19.67],
+    "material": "anodized_light"
+  },
+  "CP35": {
+    "_note": "origin: optic axis on the front face",
+    "file": "CP35-Step.step",
+    "axes": ["z", "x", "y"],
+    "origin_mm": [0.0, 0.0, 4.45],
+    "material": "anodized"
+  },
+  "SM1ZB": {
+    "_note": "drawn with the housing down; origin: optic axis at mid-plate (under the top 8-32 hole)",
+    "file": "SM1ZB-Step.step",
+    "axes": ["-z", "-x", "y"],
+    "origin_mm": [0.0, 0.0, 5.59],
+    "material": "anodized"
+  },
+  "ER1.5": {
+    "_note": "origin: middle of the rod body",
+    "file": "ER1.5-Step.step",
+    "axes": ["y", "x", "-z"],
+    "origin_mm": [0.0, 0.0, 0.0],
+    "material": "steel"
+  },
+  "PH2": {
+    "_note": "origin: post axis on the table; thumbscrew toward +y",
+    "file": "PH2-Step.step",
+    "axes": ["-x", "z", "y"],
+    "origin_mm": [0.0, -25.4, 0.0],
+    "material": "anodized"
+  },
+  "PH2@BE1": {
+    "_note": "the same PH2 standing on a BE1 (0.185in higher)",
+    "file": "PH2-Step.step",
+    "axes": ["-x", "z", "y"],
+    "origin_mm": [0.0, -30.1, 0.0],
+    "material": "anodized"
+  },
+  "BE1": {
+    "file": "BE1-Step.step",
+    "axes": ["x", "-z", "y"],
+    "origin_mm": [0.0, -4.7, 0.0],
+    "material": "steel"
+  },
+  "CF125C": {
+    "_note": "CF125 file: same body as the CF125C minus the captive screw; origin: pedestal centre, heel foot on the table",
+    "file": "CF125-Step.step",
+    "axes": ["z", "x", "y"],
+    "origin_mm": [0.0, -6.6, 0.0],
+    "material": "steel"
   }
 }

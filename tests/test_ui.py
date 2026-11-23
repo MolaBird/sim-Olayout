@@ -33,6 +33,17 @@ def view_point(win, x, y) -> QPoint:
     return win.view.mapFromScene(QPointF(x, -y))
 
 
+def test_settings_stay_out_of_the_users_preferences(window):
+    import os
+
+    from PySide6.QtCore import QSettings
+
+    from olayout.ui.settings import ENV_VAR
+
+    assert window.settings.format() == QSettings.Format.IniFormat
+    assert os.path.normcase(window.settings.fileName()) == os.path.normcase(os.environ[ENV_VAR])
+
+
 def test_add_components_and_analyze(window, qtbot):
     doc = window.doc
     doc.add_component("laser", 1.0, 3.0)

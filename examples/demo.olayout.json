@@ -3,12 +3,12 @@
   "version": 1,
   "units": "inch",
   "breadboard": {
-    "width": 24,
-    "height": 18,
+    "width": 21.0,
+    "height": 20.0,
     "pitch": 1.0,
     "margin": 0.5,
     "hole_diameter": 0.25,
-    "name": "MB1824"
+    "name": "Board 21x20"
   },
   "components": [
     {
@@ -26,8 +26,8 @@
           "power_mw": 1.0
         },
         "lens": {
-          "focal_length_mm": 35.0,
-          "distance_mm": 35.0
+          "focal_length_mm": 25.4,
+          "distance_mm": 25.4
         }
       }
     },
@@ -76,7 +76,7 @@
     {
       "id": "c4",
       "type": "lens",
-      "x": 11.9937,
+      "x": 11.4937,
       "y": 8.5,
       "angle": 180.0,
       "label": "L1",
@@ -84,7 +84,7 @@
         "optic": {
           "kind": "lens",
           "roc_mm": 0.0,
-          "focal_length_mm": 200.0,
+          "focal_length_mm": 150.0,
           "reflectance": 0.5,
           "transmittance": 1.0,
           "thickness_mm": null
@@ -97,7 +97,7 @@
     {
       "id": "c5",
       "type": "km-h-mirror",
-      "x": 21.5,
+      "x": 19.5,
       "y": 8.5,
       "angle": 225.0,
       "label": "M2",
@@ -152,7 +152,7 @@
       "id": "c8",
       "type": "laser",
       "x": 1.0,
-      "y": 16.5,
+      "y": 18.5,
       "angle": 0.0,
       "label": "S1",
       "params": {
@@ -167,8 +167,8 @@
     {
       "id": "c9",
       "type": "mirror",
-      "x": 17.1069,
-      "y": 16.6069,
+      "x": 16.1069,
+      "y": 18.6069,
       "angle": 225.0,
       "label": "M4",
       "params": {
@@ -201,11 +201,11 @@
     {
       "id": "m2",
       "a": [
-        12.0,
+        11.5,
         8.5
       ],
       "b": [
-        21.5,
+        19.5,
         8.5
       ]
     }
@@ -213,22 +213,22 @@
   "probes": [
     {
       "id": "p1",
-      "x": 4.2059,
+      "x": 3.7,
       "y": 2.5,
       "label": "P1"
     },
     {
       "id": "p2",
-      "x": 19.8741,
+      "x": 17.4057,
       "y": 8.5,
       "label": "P2"
     },
     {
       "id": "p3",
-      "x": 1.5409,
+      "x": 1.5408,
       "y": 14.5,
       "label": "P3"
     }
   ],
-  "notes": "Demo: a 780 nm fiber collimator feeds a kinematic fold mirror and a pellicle beamsplitter. The reflected arm is focused by a 200 mm lens and folded down; the transmitted arm is folded by a post-centred KM100CP and focused by a 75 mm lens. Probes sit near the foci."
+  "notes": "Demo: a 780 nm fiber collimator (SM1ZB + ER1.5 rods + CP35, f = 25.4 mm) feeds a kinematic fold mirror and a pellicle beamsplitter. The reflected arm is focused by a 150 mm lens and folded down; the transmitted arm is folded by a post-centred KM100CP and focused by a 75 mm lens. Probes sit near the foci."
 }

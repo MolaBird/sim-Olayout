@@ -59,14 +59,21 @@ def render_sprite(prims, ppi: float = DEFAULT_PPI, supersample: int = SUPERSAMPL
 
 
 def render_mesh_sprite(
-    vertices: np.ndarray, faces: np.ndarray, colors: np.ndarray | None, ppi: float = DEFAULT_PPI,
+    vertices: np.ndarray,
+    faces: np.ndarray,
+    colors: np.ndarray | None,
+    ppi: float = DEFAULT_PPI,
     supersample: int = SUPERSAMPLE,
+    material: str = "anodized",
 ) -> Sprite:
-    """Render a part-frame triangle mesh (inches) from above."""
+    """Render a part-frame triangle mesh (inches) from above.
+
+    Per-face ``colors`` win over ``material``; pass ``None`` to use the material.
+    """
     from olayout.render.mesh import allocate_for_mesh, rasterize_mesh
 
     gbuffer = allocate_for_mesh(vertices, ppi * supersample, MARGIN_INCHES)
-    rasterize_mesh(gbuffer, vertices, faces, colors)
+    rasterize_mesh(gbuffer, vertices, faces, colors, material=material)
     rgba, shadow = shade(gbuffer, supersample)
     return Sprite(rgba=rgba, shadow=shadow, x0=gbuffer.x0, y1=gbuffer.y1, ppi=ppi, z_top=float(vertices[:, 2].max()))
 
@@ -102,19 +109,24 @@ class SpriteCache:
             self._memory[key] = sprite
         return sprite
 
-    def get_mesh(self, name: str, identity: str, mesh_fn) -> Sprite:
+    def get_mesh(self, name: str, identity: str, mesh_fn, material: str | None = None) -> Sprite:
         """Sprite of a CAD mesh; ``identity`` must change whenever the mesh does.
 
         ``mesh_fn()`` returns (vertices, faces, colors) and is only called on
-        a cache miss.
+        a cache miss.  A ``material`` replaces the mesh's own colours.
         """
-        key = hashlib.sha1(f"mesh|v{RENDER_VERSION}|{self.ppi}|{SUPERSAMPLE}|{identity}".encode()).hexdigest()[:16]
+        text = f"mesh|v{RENDER_VERSION}|{self.ppi}|{SUPERSAMPLE}|{identity}|{material}"
+        key = hashlib.sha1(text.encode()).hexdigest()[:16]
         sprite = self._memory.get(key)
         if sprite is None:
             sprite = self._load(name, key)
             if sprite is None:
                 vertices, faces, colors = mesh_fn()
-                sprite = self._store(name, key, render_mesh_sprite(vertices, faces, colors, self.ppi))
+                if material is not None:
+                    sprite = render_mesh_sprite(vertices, faces, None, self.ppi, material=material)
+                else:
+                    sprite = render_mesh_sprite(vertices, faces, colors, self.ppi)
+                sprite = self._store(name, key, sprite)
             self._memory[key] = sprite
         return sprite
 

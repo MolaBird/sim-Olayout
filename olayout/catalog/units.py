@@ -27,9 +27,7 @@ from olayout.catalog.primitives import (
     Primitive,
     bounds3d,
     footprint,
-    rotation_matrix,
     slice_at,
-    transform,
     transform_all,
 )
 from olayout.core.geometry import Pose, as_polygonal, transform_geometry
@@ -109,7 +107,6 @@ class PlacedPart:
     prims: tuple[Primitive, ...]  # oriented, in the part frame
     pose: Pose
     sprite_name: str
-    stretch_x: float = 1.0  # drawn/collided scaled along the part's x axis (cage rods)
     roll: tuple[tuple[float, ...], ...] | None = None  # orientation applied to the part (for CAD meshes)
     z_offset: float = 0.0  # vertical shift applied to the part (for CAD meshes)
 
@@ -118,16 +115,11 @@ class PlacedPart:
         """Highest point of the part (its own frame), used for draw order and shadows."""
         return max(float(bounds3d(p)[1][2]) for p in self.prims)
 
-    def _stretch(self, geom):
-        if self.stretch_x == 1.0:
-            return geom
-        return shapely.affinity.scale(geom, xfact=self.stretch_x, yfact=1.0, origin=(0, 0))
-
     def footprint(self):
-        return transform_geometry(self._stretch(footprint(self.prims)), self.pose)
+        return transform_geometry(footprint(self.prims), self.pose)
 
     def beam_section(self):
-        return transform_geometry(self._stretch(slice_at(self.prims, 0.0)), self.pose)
+        return transform_geometry(slice_at(self.prims, 0.0), self.pose)
 
 
 @dataclass(frozen=True)
@@ -370,9 +362,17 @@ def _as_tuple(matrix) -> tuple[tuple[float, ...], ...]:
     return tuple(tuple(float(v) for v in row) for row in np.asarray(matrix))
 
 
-def _placed(part_id: str, pose: Pose = Pose(), stretch_x: float = 1.0) -> PlacedPart:
+def _placed(part_id: str, pose: Pose = Pose(), roll: np.ndarray | None = None, z_offset: float = 0.0) -> PlacedPart:
+    """Place a part, optionally re-oriented by ``roll`` and raised by ``z_offset``."""
     part = get_part(part_id)
-    return PlacedPart(part_id, part.layer, part.prims, pose, part_id, stretch_x)
+    prims = part.prims
+    if roll is not None or z_offset:
+        rot = np.eye(3) if roll is None else roll
+        prims = transform_all(prims, rot, (0.0, 0.0, z_offset))
+    name = part_id if roll is None and not z_offset else f"{part_id}-r{hash((prims,)) & 0xFFFF:04x}"
+    return PlacedPart(
+        part_id, part.layer, prims, pose, name, roll=None if roll is None else _as_tuple(roll), z_offset=z_offset
+    )
 
 
 def _mount_on_post(part_id: str, tap_name: str | None) -> tuple[PlacedPart, Pose]:
@@ -444,16 +444,11 @@ def build_post_mounted_optic(
     if adapter_id:
         # Adapter (e.g. KB1X1) sits on the post directly under the mount's tap.
         mount_tap_z = get_part(mount_id).oriented(comp.orientation or None).tap_z
-        adapter_part = get_part(adapter_id)
-        adapter_prims = tuple(
-            _shift_z(p, mount_tap_z) for p in adapter_part.prims
-        )
-        parts.append(
-            PlacedPart(
-                adapter_id, Layer.OPTIC, adapter_prims, Pose(), f"{adapter_id}@{mount_tap_z:.3f}", z_offset=mount_tap_z
-            )
-        )
+        parts.append(_placed(adapter_id, Pose(), z_offset=mount_tap_z))
     parts.append(mount)
+    if mount_id in PELLICLE_MOUNTS and _optic_kind(comp.params, default_kind) is not OpticKind.NONE:
+        # The pellicle's own frame sits on the mount's front face.
+        parts.append(_placed("BP1XX", mount_pose.compose(Pose(P.PELLICLE_PLANE_X, 0.0, 0.0))))
     elements, substrate, visuals = _optic_elements(
         get_part(mount_id), mount_pose, comp.params, default_kind, comp.label
     )
@@ -466,53 +461,63 @@ def build_post_mounted_optic(
     )
 
 
-def _shift_z(prim: Primitive, dz: float) -> Primitive:
-    return transform(prim, rotation_matrix("z", 0), (0.0, 0.0, dz))
-
-
 def build_base(unit: UnitType, comp: Component) -> UnitBuild:
     return UnitBuild(parts=tuple(_pedestal_parts()))
 
 
-# Collimator geometry (SM1ZB frame: origin at its front face on the optic axis).
-FIBER_TIP_X = -0.30  # the fiber tip sits inside the SM1 tube
-MIN_LENS_DISTANCE_MM = (abs(FIBER_TIP_X) + P.CP35_THICKNESS / 2) * 25.4  # plate touching the SM1ZB
+# Collimator = SM1ZB (fiber input, hanging inverted from its PH2) + four ER1.5
+# cage rods + CP35 cage plate holding the lens.  Both plates clamp the rods with
+# setscrews, so the CP35 slides along them; the rods must still pass through
+# the SM1ZB plate.
+ROD_MIN_ENGAGEMENT = 0.15  # inches of rod that must stay inside the SM1ZB plate
+
+
+def collimator_lens_range(orientation: str | None) -> tuple[float, float]:
+    """Feasible fiber -> lens distances (inches) with ER1.5 rods.
+
+    With the housing toward the lens the CP35 must clear the 0.80"-deep
+    housing, so the range shifts to longer focal lengths.
+    """
+    flipped = get_part("SM1ZB").tap(orientation).yaw == 180
+    tip_x = -P.SM1ZB_FIBER_X if flipped else P.SM1ZB_FIBER_X
+    lens_side_obstacle = -P.SM1ZB_HOUSING_BACK if flipped else P.SM1ZB_CARRIAGE_X
+    half_plate = P.CP35_THICKNESS / 2
+    lens_min = lens_side_obstacle + half_plate
+    lens_max = P.SM1ZB_PLATE_HALF_T - ROD_MIN_ENGAGEMENT + P.ER15_LENGTH - half_plate
+    return lens_min - tip_x, lens_max - tip_x
 
 
 def build_collimator(unit: UnitType, comp: Component) -> UnitBuild:
     params = comp.params
-    f_mm = _num(params, "lens.focal_length_mm", 35.0, -1e4, 1e4)
-    distance_mm = _num(params, "lens.distance_mm", 35.0, MIN_LENS_DISTANCE_MM, 2000.0)
-    distance = distance_mm * MM
+    sm1zb_part = get_part("SM1ZB")
+    tap = sm1zb_part.tap(comp.orientation or None)
+    d_min, d_max = collimator_lens_range(tap.name)
+    f_mm = _num(params, "lens.focal_length_mm", 25.4, -1e4, 1e4)
+    wanted = _num(params, "lens.distance_mm", 25.4, 0.0, 2000.0) * MM
+    distance = min(max(wanted, d_min), d_max)
 
     parts: list[PlacedPart] = _post_holder_parts(on_pedestal=False)
-    sm1zb, frame = _mount_on_post("SM1ZB", comp.orientation or None)
+    sm1zb, frame = _mount_on_post("SM1ZB", tap.name)  # the post sits right under the optic axis
     parts.append(sm1zb)
-    parts.append(_placed("FIBER", frame.compose(Pose(-0.50 - 0.30 - 0.40, 0.0, 0.0))))
+    tip_x = -P.SM1ZB_FIBER_X if tap.yaw == 180 else P.SM1ZB_FIBER_X
+    # The fiber connector always sticks out of the plate face on the fiber side.
+    parts.append(_placed("FIBER", frame.compose(Pose(-P.SM1ZB_PLATE_HALF_T, 0.0, 0.0))))
 
-    lens_x = FIBER_TIP_X + distance  # lens mid-plane, SM1ZB frame
-    cp35_front = lens_x + P.CP35_THICKNESS / 2  # the lens sits centred in the cage plate
-    rod_start, rod_end = -0.05, cp35_front + 0.05
-    parts.append(_placed("ER", frame.compose(Pose(rod_end, 0.0, 0.0)), stretch_x=rod_end - rod_start))
-    # The cage plate is rolled together with the SM1ZB (they share the cage rods).
-    roll = P.roll_bringing_down(get_part("SM1ZB").tap(comp.orientation or None).normal)
-    cp35 = get_part("CP35")
-    parts.append(
-        PlacedPart(
-            "CP35",
-            Layer.OPTIC,
-            transform_all(cp35.prims, roll),
-            frame.compose(Pose(cp35_front, 0.0, 0.0)),
-            f"CP35-roll{comp.orientation or 'bottom'}",
-            roll=_as_tuple(roll),
-        )
-    )
+    lens_x = tip_x + distance  # lens mid-plane, centred in the CP35
+    cp35_front = lens_x + P.CP35_THICKNESS / 2
+    roll = P.roll_bringing_down(tap.normal)  # CP35 is symmetric end-for-end: roll only
+    cp35_pose = frame.compose(Pose(cp35_front, 0.0, 0.0))
+    parts.append(_placed("CP35", cp35_pose, roll=roll))
+    # Rods flush with the CP35's front face, reaching back through the SM1ZB plate.
+    rod_center = cp35_front - P.ER15_LENGTH / 2
+    c = P.CAGE_SPACING / 2
+    for y in (-c, c):
+        for z in (-c, c):
+            parts.append(_placed("ER1.5", frame.compose(Pose(rod_center, y, 0.0)), z_offset=z))
 
     lens_params = {"optic": {"kind": "lens", "focal_length_mm": f_mm}}
-    elements, _, visuals = _optic_elements(
-        get_part("CP35"), frame.compose(Pose(cp35_front, 0.0, 0.0)), lens_params, OpticKind.LENS, comp.label
-    )
-    tip = frame.compose(Pose(FIBER_TIP_X, 0.0, 0.0))
+    elements, _, visuals = _optic_elements(get_part("CP35"), cp35_pose, lens_params, OpticKind.LENS, comp.label)
+    tip = frame.compose(Pose(tip_x, 0.0, 0.0))
     emitters: tuple[Emitter, ...] = ()
     if bool(get_param(params, "source.enabled", True)):
         mfd_um = _num(params, "source.mfd_um", 5.0, 0.1, 1000.0)
@@ -528,11 +533,13 @@ def build_collimator(unit: UnitType, comp: Component) -> UnitBuild:
                 name=f"{comp.label} fiber".strip(),
             ),
         )
-    gap = cp35_front - P.CP35_THICKNESS
-    notes = (
-        f"Fiber → lens: {distance_mm:.1f} mm ({distance:.3f}\")",
-        f"Gap SM1ZB → CP35: {gap:.3f}\"; cage rods ≥ {gap + P.CP35_THICKNESS + 0.25:.2f}\"",
-    )
+    notes = [
+        f"Fiber → lens: {distance / MM:.1f} mm ({distance:.3f}\")",
+        f"ER1.5 rods allow {d_min / MM:.1f}–{d_max / MM:.1f} mm in this orientation",
+    ]
+    if abs(wanted - distance) > 1e-6:
+        notes.append(f"Requested {wanted / MM:.1f} mm is out of reach; clamped")
+    notes = tuple(notes)
     return UnitBuild(
         parts=tuple(parts),
         elements=tuple(elements),
@@ -677,7 +684,7 @@ def _build_registry() -> dict[str, UnitType]:
             prefix="BS",
             mount_id="KM100BP",
             adapter_id="KB1X1",
-            bom=("KM100BP", "KB1X1", *BASE_BOM),
+            bom=("KM100BP", "BP1xx pellicle", "KB1X1", *BASE_BOM),
             default_kind=OpticKind.SPLITTER,
             kinds=SPLITTER_KINDS,
         ),
@@ -707,10 +714,10 @@ def _build_registry() -> dict[str, UnitType]:
             id="collimator",
             name="Fiber collimator",
             category="Sources",
-            description="SM1ZB fiber z-translator on a PH2, 30 mm cage rods, CP35 cage plate with lens.",
+            description="SM1ZB fiber z-translator hanging from a PH2, four ER1.5 cage rods, CP35 cage plate with a Ø1\" lens.",
             mounting=Mounting.HOLE,
             label_prefix="FC",
-            bill_of_materials=("SM1ZB", "PH2", "ER cage rods ×4", "CP35", "Ø1\" lens", "FC/PC fiber adapter"),
+            bill_of_materials=("SM1ZB", "PH2", "ER1.5 ×4", "CP35", "Ø1\" lens", "SM1 fiber adapter"),
             builder=build_collimator,
             orientation_part="SM1ZB",
             fields=(
@@ -718,18 +725,19 @@ def _build_registry() -> dict[str, UnitType]:
                 ParamField("source.wavelength_nm", "Wavelength", "float", 780.0, unit="nm", minimum=100, maximum=20000, step=1, decimals=1),
                 ParamField("source.mfd_um", "Fiber mode-field dia.", "float", 5.0, unit="µm", minimum=0.1, maximum=1000, step=0.1, decimals=2),
                 ParamField("source.power_mw", "Power", "float", 1.0, unit="mW", minimum=0, maximum=1e6, step=0.1, decimals=3),
-                ParamField("lens.focal_length_mm", "Lens focal length", "float", 35.0, unit="mm", minimum=-1e4, maximum=1e4, step=1, decimals=2),
+                ParamField("lens.focal_length_mm", "Lens focal length", "float", 25.4, unit="mm", minimum=-1e4, maximum=1e4, step=1, decimals=2),
                 ParamField(
                     "lens.distance_mm",
                     "Fiber → lens distance",
                     "float",
-                    35.0,
+                    25.4,
                     unit="mm",
-                    minimum=round(MIN_LENS_DISTANCE_MM, 2),
+                    minimum=1.0,
                     maximum=2000,
                     step=0.1,
                     decimals=2,
-                    tooltip="Set equal to the focal length for a collimated beam",
+                    tooltip="Equal to the focal length for a collimated beam. The CP35 slides along the "
+                    "ER1.5 rods, which limits the range (see the notes below).",
                 ),
             ),
         ),

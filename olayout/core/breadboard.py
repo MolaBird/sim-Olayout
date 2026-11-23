@@ -21,12 +21,18 @@ class BreadboardPreset:
     margin: float = 0.5
     description: str = ""
 
+    @property
+    def label(self) -> str:
+        return f"{self.name} — {self.description}" if self.description else self.name
 
-# Thorlabs imperial aluminum breadboards (1/4"-20 taps on 1" centers), plus a
-# few common optical-table tops.  Width is the long side, laid out left-right.
+
+# The user's 21" x 20" board first, then Thorlabs imperial aluminum
+# breadboards (1/4"-20 taps on 1" centers) and a few optical-table tops.
+# Width runs left-right on screen.
 PRESETS: dict[str, BreadboardPreset] = {
     p.name: p
     for p in [
+        BreadboardPreset("Board 21x20", 21, 20, description='21" wide x 20" deep breadboard'),
         BreadboardPreset("MB12", 12, 12, description='12" x 12" aluminum breadboard'),
         BreadboardPreset("MB1218", 18, 12, description='12" x 18" aluminum breadboard'),
         BreadboardPreset("MB1224", 24, 12, description='12" x 24" aluminum breadboard'),
@@ -40,13 +46,13 @@ PRESETS: dict[str, BreadboardPreset] = {
     ]
 }
 
-DEFAULT_PRESET = "MB1824"
+DEFAULT_PRESET = "Board 21x20"
 
 
 @dataclass(frozen=True)
 class Breadboard:
-    width: float = 24.0
-    height: float = 18.0
+    width: float = 21.0
+    height: float = 20.0
     pitch: float = 1.0
     margin: float = 0.5
     hole_diameter: float = 0.25

@@ -18,16 +18,13 @@ from olayout.core.layout import Component, Layout  # noqa: E402
 
 
 @pytest.fixture(autouse=True, scope="session")
-def _isolated_qsettings(tmp_path_factory):
-    """Keep tests from touching the user's real settings (recent files etc.)."""
-    try:
-        from PySide6.QtCore import QSettings
-    except ImportError:  # pragma: no cover
-        yield
-        return
-    QSettings.setDefaultFormat(QSettings.Format.IniFormat)
-    QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path_factory.mktemp("settings")))
+def _isolated_settings(tmp_path_factory):
+    """Keep tests out of the user's real preferences (recent files, view toggles)."""
+    from olayout.ui.settings import ENV_VAR
+
+    os.environ[ENV_VAR] = str(tmp_path_factory.mktemp("settings") / "olayout.ini")
     yield
+    os.environ.pop(ENV_VAR, None)
 
 
 def make_component(layout: Layout, type_id: str, x: float, y: float, angle: float = 0.0, **params) -> Component:

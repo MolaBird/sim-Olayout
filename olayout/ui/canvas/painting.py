@@ -91,11 +91,8 @@ def paint_parts(
 
 
 def part_transform(part: PlacedPart) -> QTransform:
-    """Part frame (y down) -> item frame, matching :func:`apply_pose` + stretch."""
-    t = QTransform().translate(part.pose.x, -part.pose.y).rotate(-part.pose.angle)
-    if part.stretch_x != 1.0:
-        t = t.scale(part.stretch_x, 1.0)
-    return t
+    """Part frame (y down) -> item frame, matching :func:`apply_pose`."""
+    return QTransform().translate(part.pose.x, -part.pose.y).rotate(-part.pose.angle)
 
 
 def parts_bounds(parts: list[PlacedPart]) -> QRectF:

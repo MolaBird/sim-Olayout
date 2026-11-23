@@ -6,7 +6,7 @@ import json
 import logging
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, QRectF, QSettings, Qt, QTimer
+from PySide6.QtCore import QByteArray, QRectF, Qt, QTimer
 from PySide6.QtGui import QAction, QActionGroup, QGuiApplication, QImage, QKeySequence, QPainter
 from PySide6.QtWidgets import (
     QDockWidget,
@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
 
 from olayout import __version__, paths
 from olayout.catalog.units import Mounting, get_unit_type
-from olayout.core.breadboard import PRESETS, Breadboard
+from olayout.core.breadboard import DEFAULT_PRESET, PRESETS, Breadboard
 from olayout.core.layout import FILE_SUFFIX, Component, Layout, LayoutFormatError
 from olayout.ui.canvas.tools import PlaceTool
 from olayout.ui.canvas.view import LayoutView
@@ -32,6 +32,7 @@ from olayout.ui.panels.beams import BeamPanel
 from olayout.ui.panels.checks import ChecksPanel
 from olayout.ui.panels.inspector import InspectorPanel
 from olayout.ui.panels.library import LibraryPanel
+from olayout.ui.settings import app_settings
 
 log = logging.getLogger(__name__)
 
@@ -71,7 +72,7 @@ SHORTCUTS_HELP = """
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.settings = QSettings("olayout", "olayout")
+        self.settings = app_settings()
         self.doc = LayoutDocument(self)
         self.view = LayoutView(self.doc)
         self.setCentralWidget(self.view)
@@ -439,8 +440,9 @@ class MainWindow(QMainWindow):
     def new_layout(self) -> None:
         if not self._confirm_discard():
             return
-        names = [f"{n}  ({p.height:g}\" × {p.width:g}\")" for n, p in PRESETS.items()]
-        choice, ok = QInputDialog.getItem(self, "New layout", "Breadboard:", names, 2, False)
+        names = [p.label for p in PRESETS.values()]
+        default = list(PRESETS).index(DEFAULT_PRESET)
+        choice, ok = QInputDialog.getItem(self, "New layout", "Breadboard:", names, default, False)
         if not ok:
             return
         preset = list(PRESETS)[names.index(choice)]

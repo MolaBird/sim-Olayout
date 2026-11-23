@@ -16,7 +16,7 @@ python -m olayout examples/demo.olayout.json        # open a layout
 python -m venv .venv
 .venv\Scripts\python -m pip install -r requirements.txt
 .venv\Scripts\python -m olayout
-.venv\Scripts\python -m pytest                      # 91 tests, headless
+.venv\Scripts\python -m pytest                      # 96 tests, headless
 ```
 
 Requirements: Python ≥ 3.11, PySide6, numpy and shapely. `trimesh` and
@@ -27,14 +27,14 @@ Requirements: Python ≥ 3.11, PySide6, numpy and shapely. `trimesh` and
 
 | Requirement | Where |
 |---|---|
-| **Breadboards**<br>Thorlabs MB series and optical tables: 1/4"-20 holes on 1" centers, first hole 1/2" from the edge, column/row numbers, mounting counterbores. | `core/breadboard.py` |
-| **Thorlabs parts**<br>KM100, KM100CP, KM100BP, FMP1, KB1X1, CP35, SM1ZB, PH2, BE1, CF125C, ER rods. Each is modeled in 3D from the archived Thorlabs mechanical drawings. | `catalog/parts.py` |
-| **Combined units**<br>`base`, `km-mirror`, `mag-km-pellicle`, `km-h-mirror`, `mirror`, `h-mirror`, `collimator`, plus `lens`, `h-lens` and a free `laser` beam source. | `catalog/units.py` |
+| **Breadboards**<br>Your 21" × 20" board by default, plus the Thorlabs MB series and optical tables: 1/4"-20 holes on 1" centers, first hole 1/2" from the edge, column/row numbers, mounting counterbores. | `core/breadboard.py` |
+| **Thorlabs parts**<br>KM100, KM100CP, KM100BP (+ BP1xx pellicle), FMP1, KB1X1, CP35, SM1ZB, ER1.5, PH2, BE1, CF125C. Each is modeled in 3D from Thorlabs mechanical drawings and checked against the vendor STEP files. | `catalog/parts.py` |
+| **Combined units**<br>`base`, `km-mirror`, `mag-km-pellicle`, `km-h-mirror`, `mirror`, `h-mirror` and `collimator` (SM1ZB on a PH2 + four ER1.5 rods + CP35 with the lens), plus `lens`, `h-lens` and a free `laser` beam source. | `catalog/units.py` |
 | **Layers**<br>Bases (post holders, pedestals, forks) and optics (mounts at beam height) are drawn and collision-checked separately. A mount may overhang another unit's base. | `catalog/parts.py` `Layer` |
 | **Placement rules**<br>A PH2 screwed into the table snaps hole to hole. A pedestal base (PH2+BE1+CF125C) can stand anywhere: its fork swivels automatically to a reachable hole (screw travel 1.054–2.294") while avoiding other bases. | `engine/fork.py` |
-| **Mounting orientations**<br>Choose which tap sits on the post (`F`). The part is rolled about its optic axis, so the top view and post offset change correctly. KM100: bottom/side hole. KM100CP: foot/ear tap, with the mirror always over the post. SM1ZB: bottom/side/top. | `PartSpec.oriented` |
+| **Mounting orientations**<br>Choose which tap sits on the post (`F`). The part is rolled about its optic axis, so the top view and post offset change correctly. KM100/KM100BP: bottom or side hole (the side hole mirrors the L-shaped plates). KM100CP: foot or ear tap, with the mirror always over the post. SM1ZB: its only 8-32 hole is in the top edge, so it hangs inverted with the knob up; choose whether the housing faces the fiber or the lens. | `PartSpec.oriented` |
 | **Illegal placement**<br>Overlaps per layer, a post holder off a hole, no hole within the fork's reach, a base hanging over the edge. The offending parts turn red and the overlap region is hatched. They are also listed in the *Checks* panel. | `engine/validation.py` |
-| **Gaussian beams**<br>A source has a wavelength, waist, waist position, M², power and direction. Beams reflect, split (R/T), focus (thin lens, off-axis steering), and are blocked by mount bodies or clipped by apertures. Tangential and sagittal q are tracked, so curved mirrors used off-axis are astigmatic. | `optics/` |
+| **Gaussian beams**<br>A source has a wavelength, waist, waist position, M², power and direction. Beams reflect, split (R/T), focus (thin lens, off-axis steering), and are blocked by mount bodies or clipped by apertures. Tangential and sagittal q are tracked, so curved mirrors used off-axis are astigmatic. Kinematic mounts have L-shaped plates, so a beam transmitted through a splitter leaves through the open side; if it walks into the mount instead, *Checks* says so and suggests the other orientation. | `optics/` |
 | **Beam readout**<br>Hover any beam to see w, w₀, distance to waist, R, power and path length. Pin probes (`P`) to keep these in a table. A beam-radius plot shows the whole path to the selected probe. | `ui/panels/beams.py` |
 | **Measurements**<br>Measure tool (`M`) snaps to holes, post axes, optic centers and beams. Shows length (decimal, fractional, mm), Δx/Δy and angle. Measurements persist in the file. | `ui/canvas/tools.py` |
 | **Fast rendering**<br>Every part is rendered once from above into a shaded sprite (height-field renderer with bevels, ambient occlusion and soft shadows), then cached on disk. The canvas only blits pixmaps. | `render/` |
@@ -82,7 +82,7 @@ It also shows:
 - the optic center
 - where the beam hits it (incidence angle, offset from center, spot size, clipping)
 - which hole the fork screw uses
-- the collimator's cage-rod length
+- for the collimator: the fiber-to-lens distances the ER1.5 rods allow
 
 With nothing selected, it edits the breadboard and the layout notes.
 
@@ -96,6 +96,8 @@ With nothing selected, it edits the breadboard and the layout notes.
   - KM100: the mirror surface is 0.335″ plus the optic thickness in front of the post.
   - KM100CP: exactly over the post.
   - FMP1: −0.085″ plus the thickness.
+  - KM100BP: the pellicle membrane (front of the BP1xx frame) is 0.76″ in front of the post and 0.05″ off-axis.
+  - Collimator: the fiber tip is 0.20″ in front of the post; the lens sits mid-CP35.
 
 ## File format
 
@@ -104,11 +106,11 @@ With nothing selected, it edits the breadboard and the layout notes.
   "format": "olayout",
   "version": 1,
   "units": "inch",
-  "breadboard": {"width": 24.0, "height": 18.0, "pitch": 1.0, "margin": 0.5, "hole_diameter": 0.25, "name": "MB1824"},
+  "breadboard": {"width": 21.0, "height": 20.0, "pitch": 1.0, "margin": 0.5, "hole_diameter": 0.25, "name": "Board 21x20"},
   "components": [
     {"id": "c1", "type": "collimator", "x": 1.5, "y": 2.5, "angle": 0.0, "label": "FC1",
      "params": {"source": {"enabled": true, "wavelength_nm": 780.0, "mfd_um": 5.0, "power_mw": 1.0},
-                "lens": {"focal_length_mm": 35.0, "distance_mm": 35.0}}},
+                "lens": {"focal_length_mm": 25.4, "distance_mm": 25.4}}},
     {"id": "c2", "type": "km-mirror", "x": 7.904, "y": 2.096, "angle": 135.0, "label": "M1",
      "params": {"optic": {"kind": "mirror", "roc_mm": 0.0}, "fork": {"angle": null}}}
   ],
@@ -125,31 +127,37 @@ Hand edits are welcome:
 
 ## Part data
 
-Dimensions come from archived Thorlabs drawings (KM100 rev C, KM100CP,
-KM100BP rev A, FMP1/M, CP33/CP35, PH1/PH4, TS25H, CF125C, TR2, MB1224). Values
-that are not on a drawing are marked `estimate` in `catalog/parts.py`:
-- BE1 height
-- KB1X1 plate split
-- the KM100 back-plate through-hole
-- the KM100CP ear height
-- the KM100BP arm width and membrane plane
+Dimensions come from Thorlabs drawings (KM100 rev C, KM100CP, KM100BP rev A,
+FMP1/M, CP33/CP35, SM1ZB rev B, PH1/PH4, TS25H, CF125C, TR2, MB1224). Each
+model was checked against the vendor STEP file: cross-sections at beam height
+(which also showed that the KM100-family back plates are L-shaped) and
+overlays of the top-view outlines. A few values are still marked `estimate`
+in `catalog/parts.py`:
+- the BP1xx pellicle frame thickness (it is not in the KM100BP STEP)
+- where the fiber tip sits in the SM1ZB carriage
+- the KB1X1 plate split
 
-> **SM1ZB:** no Thorlabs drawing or product page exists for this part number.
-> SM1ZA is the 30 mm-cage z-translator (no post tap); SM1ZP is the post-mountable
-> one (not cage-compatible). The `SM1ZB` model is an approximation of a
-> cage-compatible, post-mountable z-translator. Replace it in `make_sm1zb()` once
-> the actual drawing is known.
+**Collimator.** The SM1ZB, four ER1.5 rods and a CP35 form one unit. Both
+plates clamp the rods with setscrews, so the CP35 slides along them. The
+1.5″ rods must still reach into the SM1ZB plate, which limits the
+fiber-to-lens distance:
+- about 7.5–30 mm with the SM1ZB housing toward the fiber;
+- about 24–40 mm with it toward the lens.
+
+Distances outside the range are clamped and noted in the Inspector.
 
 ## CAD sprites
 
-If a vendor STEP file is registered in `assets/cad/cad_parts.json`, the part's
-sprite is rendered from the real CAD geometry instead of the primitive model.
-The file is tessellated once, rendered once from above, and cached in `.cache/`.
+Every Thorlabs part is registered in `assets/cad/cad_parts.json` with an
+alignment measured from its mounting holes and bores, so its sprite is
+rendered from the real CAD geometry. The file is tessellated once, rendered
+once from above, and cached in `.cache/`. Collision footprints and beam
+blocking always come from the dimensioned models.
 
-KM100 and KM100CP are registered. Their STEP files are git-ignored, so drop
-them into `assets/cad/` to use them. `python -m olayout.tools.cad_inspect <file>`
-helps register more; see `assets/cad/README.md`. Collision footprints always
-come from the dimensioned models.
+The STEP files are git-ignored, so on a fresh clone parts fall back to the
+dimensioned models until the files are dropped back into `assets/cad/`.
+`python -m olayout.tools.cad_inspect <file>` helps register more parts; see
+`assets/cad/README.md`.
 
 ## Layout of the code
 
@@ -176,3 +184,13 @@ examples/     demo.olayout.json
 - Clipping is estimated from a 1D aperture at each optic. Beams grazing a mount
   edge are not attenuated.
 - Post heights and beam-height consistency are not modeled.
+- The SM1ZB's fine z-adjustment is not modeled separately; set the fiber-to-lens
+  distance directly.
+
+## Development notes
+
+- `OLAYOUT_SETTINGS_FILE=<file.ini>` keeps the app's preferences (recent files,
+  view toggles) in that file instead of the user's registry. The test suite
+  always sets it.
+- `OLAYOUT_CACHE=<dir>` moves the sprite and mesh caches, which default to
+  `.cache/`.

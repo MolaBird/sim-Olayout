@@ -4,7 +4,8 @@ import math
 
 import pytest
 
-from olayout.catalog.parts import Layer
+from olayout.catalog.parts import PARTS, Layer
+from olayout.catalog.units import collimator_lens_range
 from olayout.core.breadboard import Breadboard
 from olayout.core.layout import Layout
 from olayout.core.units import MM, NM, UM
@@ -141,19 +142,53 @@ def test_collimator_output_is_collimated():
     fc = make_component(layout, "collimator", 2.5, 4.5)
     fc.params["source"]["wavelength_nm"] = 780.0
     fc.params["source"]["mfd_um"] = 5.0
-    fc.params["lens"] = {"focal_length_mm": 35.0, "distance_mm": 35.0}
+    fc.params["lens"] = {"focal_length_mm": 25.4, "distance_mm": 25.4}
     result = analyze(layout)
     fiber, out = result.trace.segments[:2]
-    assert fiber.length == pytest.approx(35.0 * MM, rel=1e-9)
-    expected = 780 * NM * 35.0 * MM / (math.pi * 2.5 * UM)
+    assert fiber.length == pytest.approx(25.4 * MM, rel=1e-9)
+    expected = 780 * NM * 25.4 * MM / (math.pi * 2.5 * UM)
     assert out.state.tangential.radius == pytest.approx(expected, rel=0.01)
     # Fiber at the front focal plane -> output waist exactly one focal length after the lens.
-    assert -out.state.tangential.distance_from_waist == pytest.approx(35.0 * MM, rel=1e-6)
+    assert -out.state.tangential.distance_from_waist == pytest.approx(25.4 * MM, rel=1e-6)
 
 
-def test_pellicle_splits_and_transmits_through_mount():
+def test_collimator_lens_distance_limited_by_er15_rods():
+    """The CP35 slides on 1.5" rods that must stay in the SM1ZB plate."""
+    near = collimator_lens_range("top")  # housing toward the fiber
+    far = collimator_lens_range("top-flipped")  # housing toward the lens: CP35 must clear it
+    assert near[1] < 35.0 * MM < far[1]
+    assert far[0] > near[0]
     layout = Layout()
-    # 20° incidence: the transmitted beam walks only ~0.3" sideways through the mount.
+    fc = make_component(layout, "collimator", 2.5, 4.5)
+    fc.params["lens"] = {"focal_length_mm": 35.0, "distance_mm": 35.0}
+    result = analyze(layout)
+    assert result.trace.segments[0].length == pytest.approx(near[1])
+    assert any("clamped" in note for note in result.units[fc.id].build.notes)
+    fc.orientation = "top-flipped"
+    result = analyze(layout)
+    assert result.trace.segments[0].length == pytest.approx(35.0 * MM)
+    assert not any("clamped" in note for note in result.units[fc.id].build.notes)
+
+
+def test_sm1zb_hangs_inverted_from_its_top_hole():
+    """Its only 8-32 hole is in the top edge, so the knob ends up on top."""
+    upright = PARTS["SM1ZB"]
+    knob = next(p for p in upright.prims if getattr(p, "knurled", False))
+    assert knob.center[2] < 0  # drawn with the housing and knob at the bottom
+    for tap in ("top", "top-flipped"):
+        oriented = upright.oriented(tap)
+        knob = next(p for p in oriented.prims if getattr(p, "knurled", False))
+        assert knob.center[2] > 0
+        assert oriented.post_xy == pytest.approx((0.0, 0.0))  # post right under the optic axis
+    # Flipping end-for-end moves the knob to the other side of the beam.
+    a = next(p for p in upright.oriented("top").prims if getattr(p, "knurled", False))
+    b = next(p for p in upright.oriented("top-flipped").prims if getattr(p, "knurled", False))
+    assert a.center[1] == pytest.approx(-b.center[1]) and a.center[0] == pytest.approx(-b.center[0])
+
+
+def test_pellicle_splits_on_its_front_face():
+    layout = Layout()
+    # The beam (+x) meets the membrane on the front of the BP1xx frame at 20° incidence.
     bs = make_component(layout, "mag-km-pellicle", 0.0, 0.0, angle=160.0)
     bs.params["optic"]["reflectance"] = 0.4
     result = analyze(layout)
@@ -165,7 +200,33 @@ def test_pellicle_splits_and_transmits_through_mount():
     children = [s for s in result.trace.segments if s.parent == 0]
     assert sorted(round(s.state.power, 6) for s in children) == [0.4, 0.6]
     transmitted = next(s for s in children if s.direction[0] > 0.9)
-    assert transmitted.end_event == "escaped"  # passed through the back plate's clearance hole
+    assert transmitted.end_event == "escaped"  # out through the open side of the L-shaped plates
+
+
+def _splitter_at_45(angle: float, orientation: str = ""):
+    layout = Layout()
+    bs = make_component(layout, "km-mirror", 0.0, 0.0, angle=angle)
+    bs.params["optic"]["kind"] = "splitter"
+    bs.orientation = orientation
+    result = analyze(layout)
+    cx, cy = optic_center(result, bs)
+    bs.x += 8.0 - cx
+    bs.y += 5.0 - cy
+    make_component(layout, "laser", 2.0, 5.0)
+    result = analyze(layout)
+    transmitted = next(s for s in result.trace.segments if s.parent == 0 and s.direction[0] > 0.9)
+    return bs, result, transmitted
+
+
+def test_transmitted_beam_walking_into_the_l_plate_is_explained():
+    bs, result, transmitted = _splitter_at_45(225.0)  # walks toward the side arm of the back plate
+    assert transmitted.end_event == "blocked" and transmitted.end_owner == bs.id
+    assert any("transmitted beam hits its own mount" in w.message for w in result.trace.warnings)
+    _, result, transmitted = _splitter_at_45(225.0, "side")  # mounted on its side: the L is mirrored
+    assert transmitted.end_event == "escaped"
+    assert not any("own mount" in w.message for w in result.trace.warnings)
+    _, _, transmitted = _splitter_at_45(135.0)  # walks toward the open side
+    assert transmitted.end_event == "escaped"
 
 
 def test_orientations_change_top_view_and_post_offset():

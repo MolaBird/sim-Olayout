@@ -85,7 +85,7 @@ class SpriteStore:
 
     def _render(self, part: PlacedPart) -> Sprite:
         source = self._cad_sources.get(part.part_id)
-        if source is not None and part.part_id not in self._cad_failed and part.stretch_x == 1.0:
+        if source is not None and part.part_id not in self._cad_failed:
             try:
                 return self._cad_sprite(part, source)
             except Exception:  # bad file, tessellation failure...: fall back, never crash
@@ -103,4 +103,4 @@ class SpriteStore:
             vertices[:, 2] += part.z_offset
             return vertices, faces, colors
 
-        return self._cache.get_mesh(f"cad-{part.sprite_name}", identity, mesh)
+        return self._cache.get_mesh(f"cad-{part.sprite_name}", identity, mesh, material=source.material)

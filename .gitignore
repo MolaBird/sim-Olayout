@@ -21,6 +21,7 @@ dist/
 assets/cad/*
 !assets/cad/README.md
 !assets/cad/cad_parts.json
+user-specified/
 
 # Editors / OS
 .vscode/

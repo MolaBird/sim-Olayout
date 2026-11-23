@@ -30,6 +30,7 @@ from pathlib import Path
 import numpy as np
 
 from olayout import paths
+from olayout.render.materials import material_index
 
 log = logging.getLogger(__name__)
 
@@ -45,6 +46,7 @@ class CadSource:
     axes: tuple[str, str, str]
     origin_mm: tuple[float, float, float]
     hide_below_mm: float | None = None  # optional: drop geometry below this part-frame z (mm)
+    material: str | None = None  # optional renderer material instead of the file's colours
 
     def rotation(self) -> np.ndarray:
         """3x3 matrix taking CAD coordinates to part-frame axes."""
@@ -57,6 +59,7 @@ class CadSource:
         return rot
 
     def fingerprint(self) -> str:
+        """Identity of the tessellated mesh (file + placement)."""
         stat = self.path.stat()
         text = f"{self.path.name}|{stat.st_size}|{int(stat.st_mtime)}|{self.axes}|{self.origin_mm}|{self.hide_below_mm}"
         return hashlib.sha1(text.encode()).hexdigest()[:16]
@@ -106,8 +109,11 @@ def load_registry() -> dict[str, CadSource]:
                 axes=tuple(entry.get("axes", ("x", "y", "z"))),
                 origin_mm=tuple(float(v) for v in entry.get("origin_mm", (0, 0, 0))),
                 hide_below_mm=entry.get("hide_below_mm"),
+                material=entry.get("material"),
             )
             source.rotation()
+            if source.material is not None:
+                material_index(source.material)  # unknown names are rejected here
         except (KeyError, TypeError, ValueError):
             log.warning("ignoring malformed CAD entry %r", part_id, exc_info=True)
             continue

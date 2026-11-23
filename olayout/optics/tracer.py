@@ -144,6 +144,7 @@ class _Ray:
     path: float
     source: str
     ignore: int = -1  # element index to skip (the one we just left)
+    via: str = ""  # how the ray left that element: "transmitted" or "reflected"
 
 
 class BeamTracer:
@@ -246,6 +247,7 @@ class BeamTracer:
         if best_block <= best_elem and best_block <= t_exit and math.isfinite(best_block):
             owner = self._blocker_owner[i_block]
             result.segments.append(BeamSegment(length=float(best_block), end_event="blocked", end_owner=owner, **common))
+            self._warn_own_mount(ray, owner, o + best_block * d, result)
             return
         if not math.isfinite(best_elem) or best_elem > t_exit:
             result.segments.append(BeamSegment(length=float(t_exit), end_event="escaped", **common))
@@ -266,7 +268,7 @@ class BeamTracer:
         )
         if ray.depth + 1 > self.max_depth:
             return
-        for direction, child_state in children:
+        for direction, child_state, via in children:
             if child_state.power < min_power:
                 continue
             stack.append(
@@ -279,11 +281,26 @@ class BeamTracer:
                     path=ray.path + t,
                     source=ray.source,
                     ignore=i_elem,
+                    via=via,
                 )
             )
 
+    def _warn_own_mount(self, ray: _Ray, owner: str, point, result: TraceResult) -> None:
+        """Explain a beam that is stopped by the mount of the optic it just left."""
+        if not owner or not 0 <= ray.ignore < len(self.elements):
+            return
+        element = self.elements[ray.ignore]
+        if element.owner != owner:
+            return
+        name = element.name or owner
+        if ray.via == "transmitted":
+            message = f"{name}: the transmitted beam hits its own mount; try the other mounting orientation (F)"
+        else:
+            message = f"{name}: the reflected beam hits its own mount"
+        result.warnings.append(TraceWarning(owner, message, (float(point[0]), float(point[1]))))
+
     def _interact(self, element: OpticalElement, hit, d, state: BeamState):
-        """Return (children [(direction, state)], event name, clip fraction)."""
+        """Return (children [(direction, state, "transmitted"|"reflected")], event, clip fraction)."""
         n = element.normal
         tan = element.tangent
         offset = float(np.dot(hit - np.asarray(element.center), tan))
@@ -298,22 +315,22 @@ class BeamTracer:
         if kind is OpticKind.MIRROR:
             if float(np.dot(d, n)) > 0:  # arriving from behind: opaque back side
                 return [], "blocked", 1.0
-            return [self._reflected(element, d, offset, incidence, state)], "reflect", clip
+            return [(*self._reflected(element, d, offset, incidence, state), "reflected")], "reflect", clip
         if kind is OpticKind.LENS:
             f = element.focal_length
             new_d = deflect_thin(d, n, tan, offset, f)
-            return [(new_d, state.lens(f, f))], "transmit", clip
+            return [(new_d, state.lens(f, f), "transmitted")], "transmit", clip
         if kind is OpticKind.WINDOW:
-            return [(np.asarray(d), state.scaled(element.transmittance))], "transmit", clip
+            return [(np.asarray(d), state.scaled(element.transmittance), "transmitted")], "transmit", clip
         if kind is OpticKind.SPLITTER:
             r = element.reflectance
             t = element.transmittance if element.transmittance < 1.0 else 1.0 - r
             children = []
             if t > 0:
-                children.append((np.asarray(d), state.scaled(t)))
+                children.append((np.asarray(d), state.scaled(t), "transmitted"))
             if r > 0:
                 ref_d, ref_state = self._reflected(element, d, offset, incidence, state)
-                children.append((ref_d, ref_state.scaled(r)))
+                children.append((ref_d, ref_state.scaled(r), "reflected"))
             return children, "split", clip
         return [], "blocked", 1.0
 

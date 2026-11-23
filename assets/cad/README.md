@@ -40,6 +40,14 @@ so CAD only changes how a part looks.
    * `origin_mm` is the CAD point that becomes the part origin. It lies on the
      optic axis, directly above the primary mounting tap. For a post-centred
      mount like the KM100CP, use the mirror's front-surface centre.
+   * `material` is optional and replaces the file's colours with one of the
+     renderer's materials (`anodized`, `anodized_light`, `steel`, ...).
+     Thorlabs STEP files are single-colour gray, so set it to match the rest of
+     the canvas.
+
+   To check an alignment, draw the part's dimensioned outline over the CAD
+   render. The outline should hug the silhouette, and the post axis should sit
+   on the real mounting hole.
 4. Restart the app. Sprites are re-rendered automatically when the file or
    its entry changes.
 

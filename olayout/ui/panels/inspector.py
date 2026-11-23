@@ -279,7 +279,7 @@ class InspectorPanel(QScrollArea):
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
         preset = QComboBox()
         for name, p in PRESETS.items():
-            preset.addItem(f"{name}  ({p.height:g}\" × {p.width:g}\")", name)
+            preset.addItem(p.label, name)
         preset.addItem("Custom", "")
         index = preset.findData(board.name)
         preset.setCurrentIndex(index if index >= 0 else preset.count() - 1)

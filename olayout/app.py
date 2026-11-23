@@ -8,7 +8,7 @@ import traceback
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, Qt, QTimer
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from olayout import paths
@@ -65,6 +65,7 @@ def main(argv: list[str] | None = None) -> int:
     app.setOrganizationName("olayout")
 
     from olayout.ui.main_window import MainWindow
+    from olayout.ui.settings import app_settings
     from olayout.ui.theme import apply_theme
     from olayout.ui.warmup import warm_sprite_cache
 
@@ -90,7 +91,7 @@ def main(argv: list[str] | None = None) -> int:
             return
         if crashed_last_time and window.offer_recovery():
             return
-        settings = QSettings("olayout", "olayout")
+        settings = app_settings()
         demo = paths.EXAMPLES_DIR / "demo.olayout.json"
         if not settings.value("first_run_done", False) and demo.exists():
             window.open_path(demo, confirmed=True, as_template=True)
