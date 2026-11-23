@@ -448,7 +448,7 @@ def build_post_mounted_optic(
     parts.append(mount)
     if mount_id in PELLICLE_MOUNTS and _optic_kind(comp.params, default_kind) is not OpticKind.NONE:
         # The pellicle's own frame sits on the mount's front face.
-        parts.append(_placed("BP1XX", mount_pose.compose(Pose(P.PELLICLE_PLANE_X, 0.0, 0.0))))
+        parts.append(_placed("BP108", mount_pose.compose(Pose(P.PELLICLE_PLANE_X, 0.0, 0.0))))
     elements, substrate, visuals = _optic_elements(
         get_part(mount_id), mount_pose, comp.params, default_kind, comp.label
     )
@@ -465,15 +465,17 @@ def build_base(unit: UnitType, comp: Component) -> UnitBuild:
     return UnitBuild(parts=tuple(_pedestal_parts()))
 
 
-# Collimator = SM1ZB (fiber input, hanging inverted from its PH2) + four ER1.5
-# cage rods + CP35 cage plate holding the lens.  Both plates clamp the rods with
-# setscrews, so the CP35 slides along them; the rods must still pass through
-# the SM1ZB plate.
+# Collimator = SM1ZB (fiber input, hanging inverted from its PH2) + four ER cage
+# rods (length is a parameter; ER1.5 by default) + CP35 cage plate holding the
+# lens.  Both plates clamp the rods with setscrews, so the CP35 slides along
+# them; the rods must still pass through the SM1ZB plate.
 ROD_MIN_ENGAGEMENT = 0.15  # inches of rod that must stay inside the SM1ZB plate
+DEFAULT_ROD_LENGTH = 1.5  # ER1.5
+ROD_LENGTH_RANGE = (0.5, 24.0)
 
 
-def collimator_lens_range(orientation: str | None) -> tuple[float, float]:
-    """Feasible fiber -> lens distances (inches) with ER1.5 rods.
+def collimator_lens_range(orientation: str | None, rod_length: float = DEFAULT_ROD_LENGTH) -> tuple[float, float]:
+    """Feasible fiber -> lens distances (inches) for a rod length.
 
     With the housing toward the lens the CP35 must clear the 0.80"-deep
     housing, so the range shifts to longer focal lengths.
@@ -483,15 +485,16 @@ def collimator_lens_range(orientation: str | None) -> tuple[float, float]:
     lens_side_obstacle = -P.SM1ZB_HOUSING_BACK if flipped else P.SM1ZB_CARRIAGE_X
     half_plate = P.CP35_THICKNESS / 2
     lens_min = lens_side_obstacle + half_plate
-    lens_max = P.SM1ZB_PLATE_HALF_T - ROD_MIN_ENGAGEMENT + P.ER15_LENGTH - half_plate
-    return lens_min - tip_x, lens_max - tip_x
+    lens_max = P.SM1ZB_PLATE_HALF_T - ROD_MIN_ENGAGEMENT + rod_length - half_plate
+    return lens_min - tip_x, max(lens_max, lens_min) - tip_x
 
 
 def build_collimator(unit: UnitType, comp: Component) -> UnitBuild:
     params = comp.params
     sm1zb_part = get_part("SM1ZB")
     tap = sm1zb_part.tap(comp.orientation or None)
-    d_min, d_max = collimator_lens_range(tap.name)
+    rod_length = _num(params, "rods.length_in", DEFAULT_ROD_LENGTH, *ROD_LENGTH_RANGE)
+    d_min, d_max = collimator_lens_range(tap.name, rod_length)
     f_mm = _num(params, "lens.focal_length_mm", 25.4, -1e4, 1e4)
     wanted = _num(params, "lens.distance_mm", 25.4, 0.0, 2000.0) * MM
     distance = min(max(wanted, d_min), d_max)
@@ -509,14 +512,15 @@ def build_collimator(unit: UnitType, comp: Component) -> UnitBuild:
     cp35_pose = frame.compose(Pose(cp35_front, 0.0, 0.0))
     parts.append(_placed("CP35", cp35_pose, roll=roll))
     # Rods flush with the CP35's front face, reaching back through the SM1ZB plate.
-    rod_center = cp35_front - P.ER15_LENGTH / 2
+    rod_center = cp35_front - rod_length / 2
     c = P.CAGE_SPACING / 2
     for y in (-c, c):
         for z in (-c, c):
-            parts.append(_placed("ER1.5", frame.compose(Pose(rod_center, y, 0.0)), z_offset=z))
+            parts.append(_cage_rod(rod_length, frame.compose(Pose(rod_center, y, 0.0)), z))
 
     lens_params = {"optic": {"kind": "lens", "focal_length_mm": f_mm}}
-    elements, _, visuals = _optic_elements(get_part("CP35"), cp35_pose, lens_params, OpticKind.LENS, comp.label)
+    # The lens sits inside the cage plate: it acts on the beam but is not drawn.
+    elements, _, _ = _optic_elements(get_part("CP35"), cp35_pose, lens_params, OpticKind.LENS, comp.label)
     tip = frame.compose(Pose(tip_x, 0.0, 0.0))
     emitters: tuple[Emitter, ...] = ()
     if bool(get_param(params, "source.enabled", True)):
@@ -535,7 +539,7 @@ def build_collimator(unit: UnitType, comp: Component) -> UnitBuild:
         )
     notes = [
         f"Fiber → lens: {distance / MM:.1f} mm ({distance:.3f}\")",
-        f"ER1.5 rods allow {d_min / MM:.1f}–{d_max / MM:.1f} mm in this orientation",
+        f"{rod_length:g}\" rods allow {d_min / MM:.1f}–{d_max / MM:.1f} mm in this orientation",
     ]
     if abs(wanted - distance) > 1e-6:
         notes.append(f"Requested {wanted / MM:.1f} mm is out of reach; clamped")
@@ -545,9 +549,14 @@ def build_collimator(unit: UnitType, comp: Component) -> UnitBuild:
         elements=tuple(elements),
         emitters=emitters,
         blockers=tuple(_beam_blockers(parts)),
-        optic_visuals=tuple(visuals),
         notes=notes,
     )
+
+
+def _cage_rod(length: float, pose: Pose, z: float) -> PlacedPart:
+    """A plain Ø6 mm cage rod of any length (drawn from its own primitive)."""
+    prims = transform_all(P.cage_rod_prims(length), np.eye(3), (0.0, 0.0, z))
+    return PlacedPart("ER", Layer.OPTIC, prims, pose, f"ER-{length:g}in", z_offset=z)
 
 
 def build_laser(unit: UnitType, comp: Component) -> UnitBuild:
@@ -586,11 +595,15 @@ def _mount_unit(
     adapter_id: str | None = None,
     kinds: tuple[OpticKind, ...] | None = None,
     optic_defaults: dict | None = None,
+    optic_param_fields: tuple[ParamField, ...] | None = None,
 ) -> UnitType:
     def builder(unit: UnitType, comp: Component) -> UnitBuild:
         return build_post_mounted_optic(unit, comp, mount_id=mount_id, adapter_id=adapter_id, default_kind=default_kind)
 
-    fields = list(optic_fields(default_kind, kinds, with_thickness=mount_id not in PELLICLE_MOUNTS))
+    if optic_param_fields is not None:
+        fields = list(optic_param_fields)
+    else:
+        fields = list(optic_fields(default_kind, kinds, with_thickness=mount_id not in PELLICLE_MOUNTS))
     if optic_defaults:
         fields = [
             ParamField(**{**f.__dict__, "default": optic_defaults[f.key]}) if f.key in optic_defaults else f
@@ -626,7 +639,21 @@ def _mount_unit(
 
 
 BASE_BOM = ("PH2", "BE1", "CF125C", 'TR-series Ø1/2" post')
-SPLITTER_KINDS = (OpticKind.SPLITTER, OpticKind.WINDOW, OpticKind.NONE)
+# KM100BP + BP108: the optic is always the pellicle; only its split ratio is editable
+# (other Ø1" BP1xx pellicles share the frame).
+BP108_FIELDS = (
+    ParamField(
+        "optic.reflectance",
+        "Reflectance R",
+        "float",
+        P.BP108_REFLECTANCE,
+        minimum=0.0,
+        maximum=1.0,
+        step=0.01,
+        decimals=3,
+        tooltip="BP108: 8:92 (R:T), uncoated, 400–2400 nm",
+    ),
+)
 
 
 def _build_registry() -> dict[str, UnitType]:
@@ -677,16 +704,16 @@ def _build_registry() -> dict[str, UnitType]:
         ),
         _mount_unit(
             "mag-km-pellicle",
-            "Magnetic kinematic pellicle",
+            "Pellicle beamsplitter (BP108)",
             category="Beamsplitters",
-            description="KM100BP pellicle mount on a KB1X1 magnetic base, on a pedestal base.",
+            description="BP108 8:92 pellicle in a KM100BP kinematic mount, on a KB1X1 magnetic base and pedestal base.",
             mounting=Mounting.PEDESTAL,
             prefix="BS",
             mount_id="KM100BP",
             adapter_id="KB1X1",
-            bom=("KM100BP", "BP1xx pellicle", "KB1X1", *BASE_BOM),
+            bom=("KM100BP", "BP108", "KB1X1", *BASE_BOM),
             default_kind=OpticKind.SPLITTER,
-            kinds=SPLITTER_KINDS,
+            optic_param_fields=BP108_FIELDS,
         ),
         _mount_unit(
             "lens",
@@ -714,10 +741,10 @@ def _build_registry() -> dict[str, UnitType]:
             id="collimator",
             name="Fiber collimator",
             category="Sources",
-            description="SM1ZB fiber z-translator hanging from a PH2, four ER1.5 cage rods, CP35 cage plate with a Ø1\" lens.",
+            description="SM1ZB fiber z-translator hanging from a PH2, four ER cage rods (ER1.5 by default), CP35 cage plate with a Ø1\" lens.",
             mounting=Mounting.HOLE,
             label_prefix="FC",
-            bill_of_materials=("SM1ZB", "PH2", "ER1.5 ×4", "CP35", "Ø1\" lens", "SM1 fiber adapter"),
+            bill_of_materials=("SM1ZB", "PH2", "ER rods ×4", "CP35", "Ø1\" lens", "SM1 fiber adapter"),
             builder=build_collimator,
             orientation_part="SM1ZB",
             fields=(
@@ -737,7 +764,19 @@ def _build_registry() -> dict[str, UnitType]:
                     step=0.1,
                     decimals=2,
                     tooltip="Equal to the focal length for a collimated beam. The CP35 slides along the "
-                    "ER1.5 rods, which limits the range (see the notes below).",
+                    "cage rods, which limits the range (see the notes below).",
+                ),
+                ParamField(
+                    "rods.length_in",
+                    "Cage rod length",
+                    "float",
+                    DEFAULT_ROD_LENGTH,
+                    unit="in",
+                    minimum=ROD_LENGTH_RANGE[0],
+                    maximum=ROD_LENGTH_RANGE[1],
+                    step=0.5,
+                    decimals=2,
+                    tooltip="ER-series rods: ER05 = 0.5\", ER1, ER1.5, ER2, ER3, ER4, ER6, ...",
                 ),
             ),
         ),
@@ -803,3 +842,18 @@ def get_unit_type(type_id: str) -> UnitType:
 
 def new_component_params(type_id: str) -> dict:
     return get_unit_type(type_id).default_params()
+
+
+def catalog_parts() -> list[PlacedPart]:
+    """Every distinct part orientation the catalog produces: each unit in each
+    orientation with default parameters, plus the pedestal clamping fork."""
+    seen: dict[tuple, PlacedPart] = {}
+    for unit in UNIT_TYPES.values():
+        for orientation in [name for name, _ in unit.orientations()] or [""]:
+            comp = Component("catalog", unit.id, orientation=orientation, params=unit.default_params())
+            parts = unit.build(comp).parts
+            if unit.mounting is Mounting.PEDESTAL:
+                parts += fork_parts(default_fork())
+            for part in parts:
+                seen.setdefault((part.part_id, part.prims, part.roll, part.z_offset), part)
+    return list(seen.values())

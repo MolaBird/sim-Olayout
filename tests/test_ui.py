@@ -5,9 +5,12 @@ import pytest
 pytest.importorskip("pytestqt")
 
 from PySide6.QtCore import QPoint, QPointF, Qt  # noqa: E402
+from PySide6.QtGui import QWheelEvent  # noqa: E402
+from PySide6.QtWidgets import QMenu  # noqa: E402
 
 from olayout.core.layout import Layout  # noqa: E402
 from olayout.ui.main_window import MainWindow  # noqa: E402
+from olayout.ui.panels.checks import IGNORED_ROLE  # noqa: E402
 
 
 @pytest.fixture
@@ -176,3 +179,91 @@ def test_inspector_edits_parameters(window, qtbot):
     assert doc.layout.component(cid).params["optic"]["focal_length_mm"] == 250.0
     inspector._pose_spins["x"].setValue(7.25)
     assert doc.layout.component(cid).x == 7.25
+
+
+def wheel(win, pos: QPoint, delta: int, modifiers=Qt.KeyboardModifier.NoModifier) -> None:
+    """Send one mouse-wheel step (delta in 1/8 degree; 120 = one notch) at a viewport position."""
+    global_pos = QPointF(win.view.viewport().mapToGlobal(pos))
+    event = QWheelEvent(
+        QPointF(pos), global_pos, QPoint(0, 0), QPoint(0, delta), Qt.MouseButton.NoButton, modifiers,
+        Qt.ScrollPhase.NoScrollPhase, False,
+    )
+    win.view.wheelEvent(event)
+
+
+def test_wheel_zoom_keeps_the_point_under_the_cursor(window, qtbot):
+    view = window.view
+    pos = QPoint(25, 20)  # near a viewport corner, off the board when zoomed out
+    for delta in (120, 120, -120, 480, -960, -960, -960):
+        before = view.mapToScene(pos)
+        wheel(window, pos, delta)
+        after = view.mapToScene(pos)
+        tolerance = 1.5 / view.pixels_per_inch()  # within a pixel and a half
+        assert abs(after.x() - before.x()) < tolerance and abs(after.y() - before.y()) < tolerance
+
+
+def test_pan_is_exact_even_when_zoomed_far_out(window, qtbot):
+    view = window.view
+    centre = QPointF(view.viewport().width() / 2, view.viewport().height() / 2)
+    view.zoom_at(1e-6, centre)  # clamps at the minimum zoom
+    ppi = view.pixels_per_inch()
+    before = view.mapToScene(centre.toPoint())
+    view.scroll_by(150.0, -90.0)
+    after = view.mapToScene(centre.toPoint())
+    assert (after.x() - before.x()) * ppi == pytest.approx(150.0, abs=1.0)
+    assert (after.y() - before.y()) * ppi == pytest.approx(-90.0, abs=1.0)
+
+
+def test_alt_wheel_rotates_the_selection_and_ctrl_wheel_zooms(window, qtbot):
+    doc, view = window.doc, window.view
+    cid = doc.add_component("km-mirror", 6.0, 6.0)
+    doc.set_selection([cid])
+    pos = view_point(window, 6.0, 6.0)
+    start, ppi = doc.layout.component(cid).angle, view.pixels_per_inch()
+    wheel(window, pos, 120, Qt.KeyboardModifier.ControlModifier)
+    assert view.pixels_per_inch() > ppi and doc.layout.component(cid).angle == start
+    wheel(window, pos, 120, Qt.KeyboardModifier.AltModifier)
+    assert doc.layout.component(cid).angle == pytest.approx(start + 5.0)
+    wheel(window, pos, -120, Qt.KeyboardModifier.AltModifier | Qt.KeyboardModifier.ShiftModifier)
+    assert doc.layout.component(cid).angle == pytest.approx(start + 4.0)
+
+
+def test_ignoring_problems_clears_highlights_and_can_be_undone(window, qtbot):
+    doc, panel = window.doc, window.checks
+    a = doc.add_component("km-mirror", 6.0, 6.0)
+    doc.add_component("km-mirror", 6.2, 6.1)
+    settle(qtbot, window)
+    assert doc.analysis.active_issues and not panel.ignore_button.isEnabled()
+
+    panel.list.selectAll()
+    assert panel.ignore_button.isEnabled()
+    panel.ignore_button.click()
+    settle(qtbot, window)
+    assert doc.layout.ignored and doc.analysis.active_issues == []
+    assert not any(item.illegal for item in window.view.layout_scene.comp_items[a].values())
+    assert "OK" in window.issues_button.text() and "ignored" in window.issues_button.text()
+    assert all(panel.list.item(i).data(IGNORED_ROLE) for i in range(panel.list.count()))  # still listed
+    assert not panel.restore_all_button.isHidden()  # the dock tab itself may be hidden
+
+    doc.undo_stack.undo()
+    settle(qtbot, window)
+    assert not doc.layout.ignored and doc.analysis.active_issues
+
+
+def test_context_menu_ignores_and_restores_a_parts_problems(window, qtbot):
+    doc = window.doc
+    a = doc.add_component("km-mirror", 6.0, 6.0)
+    doc.add_component("km-mirror", 6.2, 6.1)
+    settle(qtbot, window)
+    menu = QMenu()
+    window._add_ignore_actions(menu, a)
+    (ignore,) = [act for act in menu.actions() if act.text().startswith("Ignore")]
+    ignore.trigger()
+    settle(qtbot, window)
+    assert doc.analysis.issues and not doc.analysis.issues_for(a)
+    menu = QMenu()
+    window._add_ignore_actions(menu, a)
+    (restore,) = [act for act in menu.actions() if act.text().startswith("Restore")]
+    restore.trigger()
+    settle(qtbot, window)
+    assert doc.analysis.issues_for(a)

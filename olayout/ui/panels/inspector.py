@@ -89,6 +89,7 @@ class InspectorPanel(QScrollArea):
         self._orientation: QComboBox | None = None
         self._info: QLabel | None = None
         self._checks: QLabel | None = None
+        self._ignored: QLabel | None = None
         self._layout_stats: QLabel | None = None
         self._board_widgets: tuple[QComboBox, QDoubleSpinBox, QDoubleSpinBox, QDoubleSpinBox] | None = None
         self._notes_edit: QPlainTextEdit | None = None
@@ -122,6 +123,7 @@ class InspectorPanel(QScrollArea):
         self._orientation = None
         self._info = None
         self._checks = None
+        self._ignored = None
         self._layout_stats = None
         self._board_widgets = None
         self._notes_edit = None
@@ -215,6 +217,10 @@ class InspectorPanel(QScrollArea):
         self._checks.setObjectName("Error")
         self._checks.setWordWrap(True)
         self._vbox.addWidget(self._checks)
+        self._ignored = _dim("")
+        self._ignored.setWordWrap(True)
+        self._ignored.setToolTip("Problems you chose to ignore (Checks panel, or right-click the part)")
+        self._vbox.addWidget(self._ignored)
         if unit.bill_of_materials:
             self._vbox.addWidget(_dim("Parts: " + ", ".join(unit.bill_of_materials)))
         self.refresh_values()
@@ -312,7 +318,7 @@ class InspectorPanel(QScrollArea):
             _dim(
                 "Mouse: drag to move · drag the blue handle to rotate (Shift free, Ctrl 1°, "
                 "Alt aims a mirror's reflected beam at the cursor) · wheel zooms · "
-                "middle/right drag or Space+drag pans · Ctrl+wheel rotates.\n"
+                "middle/right drag or Space+drag pans · Alt+wheel rotates.\n"
                 "Keys: R rotate 90° · Q/E ±15° (Shift ±1°) · F mounting orientation · "
                 "M measure · P probe · V select · Del delete · Ctrl+D duplicate · Alt disables snapping."
             )
@@ -413,15 +419,17 @@ class InspectorPanel(QScrollArea):
             layout = self.doc.layout
             analysis = self.doc.analysis
             n_beams = len(analysis.trace.segments)
-            issues = len(analysis.issues)
+            issues = len(analysis.active_issues)
+            n_ignored = len(layout.ignored)
             text = (
                 f"{len(layout.components)} components · {len(layout.measurements)} measurements · "
                 f"{len(layout.probes)} probes\n{n_beams} beam segments · "
                 + ("no placement problems" if not issues else f"{issues} placement problem(s)")
+                + (f" · {n_ignored} ignored" if n_ignored else "")
             )
             self._layout_stats.setText(text)
         comp = self._component()
-        if comp is None or self._info is None or self._checks is None:
+        if comp is None or self._info is None or self._checks is None or self._ignored is None:
             return
         self._refresh_auto_values(comp)  # e.g. the fork direction the solver picked
         placed = self.doc.analysis.units.get(comp.id)
@@ -449,6 +457,9 @@ class InspectorPanel(QScrollArea):
         issues = self.doc.analysis.issues_for(comp.id)
         self._checks.setText("\n".join("⚠ " + i.message for i in issues))
         self._checks.setVisible(bool(issues))
+        ignored = [i for i in self.doc.analysis.ignored_issues if comp.id in i.component_ids]
+        self._ignored.setText("\n".join("Ignored: " + i.message for i in ignored))
+        self._ignored.setVisible(bool(ignored))
 
     def _beam_lines(self, comp: Component) -> list[str]:
         lines = []

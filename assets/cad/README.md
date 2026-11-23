@@ -1,9 +1,11 @@
 # Vendor CAD for part sprites
 
-Parts are drawn on the canvas as top-down sprites rendered **once** and cached
-in `.cache/sprites`. By default a sprite comes from the part's dimensioned
-primitive model (`olayout/catalog/parts.py`). If a vendor CAD file is
-registered here, the sprite is rendered from the real geometry instead.
+Parts are drawn on the canvas as top-down sprites rendered **once**. By
+default a sprite comes from the part's dimensioned primitive model
+(`olayout/catalog/parts.py`) and is cached in `.cache/sprites`. If a vendor
+CAD file is registered here, the sprite is rendered from the real geometry
+instead and saved in `assets/sprites/`, which is committed. Clones without
+the CAD files still draw the real parts.
 
 Collision footprints and beam blocking always come from the primitive models,
 so CAD only changes how a part looks.
@@ -48,8 +50,15 @@ so CAD only changes how a part looks.
    To check an alignment, draw the part's dimensioned outline over the CAD
    render. The outline should hug the silhouette, and the post axis should sit
    on the real mounting hole.
-4. Restart the app. Sprites are re-rendered automatically when the file or
-   its entry changes.
+4. Bake its sprites and commit them, so clones without the file get them too:
+
+   ```
+   python -m olayout.tools.bake_sprites --prune
+   git add assets/sprites
+   ```
+
+   The app also re-renders a sprite on its own whenever the local file
+   changes (its SHA-1 is recorded in `assets/sprites/index.json`).
 
 STEP support needs the optional `cascadio` and `trimesh` packages, both
 listed in `requirements.txt`. Without them the app falls back to the

@@ -28,7 +28,7 @@ from olayout.ui.canvas.items import (
 from olayout.ui.document import LayoutDocument
 from olayout.ui.theme import C, wavelength_color
 
-SCENE_MARGIN = 30.0  # inches of canvas around the board you can pan into
+SCENE_MARGIN = 1000.0  # inches of canvas around the board: effectively unbounded, so zoom/pan never hit an edge
 BOARD_CORNER_R = 0.13  # MB breadboard corner radius
 
 
@@ -270,7 +270,7 @@ class LayoutScene(QGraphicsScene):
         analysis = self.doc.analysis
         illegal_layers: dict[str, set[Layer]] = {}
         regions = []
-        for issue in analysis.issues:
+        for issue in analysis.active_issues:  # ignored problems are not highlighted
             layers = {issue.layer} if issue.layer is not None else {Layer.BASE, Layer.OPTIC}
             for cid in issue.component_ids:
                 illegal_layers.setdefault(cid, set()).update(layers)

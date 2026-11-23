@@ -1,7 +1,7 @@
 """Render every part sprite up front (with a progress dialog on a cold cache).
 
-Sprites are cached on disk, so after the first launch this takes a fraction
-of a second and the dialog never appears.
+Sprites are cached on disk (CAD ones are committed), so after the first
+launch this takes a fraction of a second and the dialog never appears.
 """
 
 from __future__ import annotations
@@ -11,29 +11,14 @@ import logging
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QProgressDialog
 
-from olayout.catalog.units import UNIT_TYPES, Mounting, default_fork, new_component_params
-from olayout.core.layout import Component
-from olayout.engine.world import BuildCache
+from olayout.catalog.units import catalog_parts
 from olayout.ui.canvas.sprite_store import SpriteStore
 
 log = logging.getLogger(__name__)
 
 
-def _all_parts():
-    cache = BuildCache()
-    seen: dict[tuple, object] = {}
-    for unit in UNIT_TYPES.values():
-        orientations = [name for name, _ in unit.orientations()] or [""]
-        for orientation in orientations:
-            comp = Component("warm", unit.id, orientation=orientation, params=new_component_params(unit.id))
-            fork = default_fork() if unit.mounting is Mounting.PEDESTAL else None
-            for part in cache.place(comp, fork).parts:
-                seen.setdefault((part.part_id, part.prims, part.roll, part.z_offset), part)
-    return list(seen.values())
-
-
 def warm_sprite_cache() -> None:
-    parts = _all_parts()
+    parts = catalog_parts()
     dialog = QProgressDialog("Rendering part models (first run only)…", None, 0, len(parts))
     dialog.setWindowTitle("Optical Layout")
     dialog.setWindowModality(Qt.WindowModality.ApplicationModal)

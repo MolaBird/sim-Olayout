@@ -28,6 +28,9 @@
         "lens": {
           "focal_length_mm": 25.4,
           "distance_mm": 25.4
+        },
+        "rods": {
+          "length_in": 1.5
         }
       }
     },
@@ -55,18 +58,14 @@
     {
       "id": "c3",
       "type": "mag-km-pellicle",
-      "x": 6.9272,
-      "y": 9.0021,
+      "x": 6.9201,
+      "y": 9.0091,
       "angle": 315.0,
       "label": "BS1",
       "orientation": "side",
       "params": {
         "optic": {
-          "kind": "splitter",
-          "roc_mm": 0.0,
-          "focal_length_mm": 100.0,
-          "reflectance": 0.45,
-          "transmittance": 1.0
+          "reflectance": 0.08
         },
         "fork": {
           "angle": null
@@ -230,5 +229,5 @@
       "label": "P3"
     }
   ],
-  "notes": "Demo: a 780 nm fiber collimator (SM1ZB + ER1.5 rods + CP35, f = 25.4 mm) feeds a kinematic fold mirror and a pellicle beamsplitter. The reflected arm is focused by a 150 mm lens and folded down; the transmitted arm is folded by a post-centred KM100CP and focused by a 75 mm lens. Probes sit near the foci."
+  "notes": "Demo: a 780 nm fiber collimator (SM1ZB + ER1.5 rods + CP35, f = 25.4 mm) feeds a kinematic fold mirror and a BP108 pellicle beamsplitter (8:92). The reflected arm is focused by a 150 mm lens and folded down; the transmitted arm is folded by a post-centred KM100CP and focused by a 75 mm lens. Probes sit near the foci."
 }

@@ -10,6 +10,7 @@ PACKAGE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = PACKAGE_DIR.parent
 EXAMPLES_DIR = PROJECT_ROOT / "examples"
 CAD_DIR = PROJECT_ROOT / "assets" / "cad"
+BAKED_SPRITES_DIR = PROJECT_ROOT / "assets" / "sprites"  # committed CAD sprites
 
 
 def _writable(directory: Path) -> bool:

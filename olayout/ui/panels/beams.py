@@ -188,11 +188,12 @@ class BeamPanel(QWidget):
 
     def refresh(self) -> None:
         trace = self.doc.analysis.trace
+        warnings = self.doc.analysis.active_warnings  # ignored ones are left out
         sources = {s.source for s in trace.segments}
         blocked = sum(1 for s in trace.segments if s.end_event == "blocked")
         self.summary.setText(
             f"{len(sources)} source(s) · {len(trace.segments)} beam segment(s) · {blocked} blocked"
-            + (f" · {len(trace.warnings)} warning(s): " + "; ".join(w.message for w in trace.warnings[:3]) if trace.warnings else "")
+            + (f" · {len(warnings)} warning(s): " + "; ".join(w.message for w in warnings[:3]) if warnings else "")
         )
         selected_row = self.table.currentRow()
         self.table.blockSignals(True)

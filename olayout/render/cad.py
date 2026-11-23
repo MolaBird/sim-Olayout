@@ -5,6 +5,8 @@ compressed mesh), placed in the part frame by an entry in
 ``assets/cad/cad_parts.json``, and rendered once into a top-down sprite.
 Collision footprints and beam blocking still come from the dimensioned
 primitive models, so a missing CAD file only changes how a part looks.
+The rendered sprites are committed (see :mod:`olayout.render.cad_sprites`),
+so clones without the vendor files still draw the real parts.
 
 Registry entry::
 
@@ -58,6 +60,17 @@ class CadSource:
             raise ValueError(f"{self.part_id}: axes {self.axes} are not a valid axis permutation")
         return rot
 
+    @property
+    def is_step(self) -> bool:
+        return self.path.suffix.lower() in (".step", ".stp")
+
+    def readable(self) -> bool:
+        """The file is here and the libraries needed to read it are installed."""
+        if not self.path.exists():
+            return False
+        has_trimesh, has_cascadio = libraries_available()
+        return has_trimesh and (has_cascadio or not self.is_step)
+
     def fingerprint(self) -> str:
         """Identity of the tessellated mesh (file + placement)."""
         stat = self.path.stat()
@@ -65,10 +78,28 @@ class CadSource:
         return hashlib.sha1(text.encode()).hexdigest()[:16]
 
 
+_SHA1_MEMO: dict[tuple[Path, int, int], str] = {}
+
+
+def content_sha1(path: Path) -> str:
+    """SHA-1 of a file's bytes (memoized while its size and mtime stay put)."""
+    stat = path.stat()
+    memo_key = (path, stat.st_size, stat.st_mtime_ns)
+    digest = _SHA1_MEMO.get(memo_key)
+    if digest is None:
+        sha1 = hashlib.sha1()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1 << 20), b""):
+                sha1.update(chunk)
+        digest = _SHA1_MEMO[memo_key] = sha1.hexdigest()
+    return digest
+
+
 def cad_dir() -> Path:
     return paths.CAD_DIR
 
 
+@lru_cache(maxsize=1)
 def libraries_available() -> tuple[bool, bool]:
     """(trimesh importable, cascadio importable)."""
     try:
@@ -88,7 +119,11 @@ def libraries_available() -> tuple[bool, bool]:
 
 @lru_cache(maxsize=1)
 def load_registry() -> dict[str, CadSource]:
-    """CAD sources whose files exist and can be read with installed libraries."""
+    """Every well-formed CAD entry, whether or not its file is on this machine.
+
+    Use :meth:`CadSource.readable` before tessellating; without the file the
+    committed sprite (if any) is still used.
+    """
     registry_path = cad_dir() / REGISTRY_FILE
     if not registry_path.exists():
         return {}
@@ -97,7 +132,6 @@ def load_registry() -> dict[str, CadSource]:
     except (OSError, json.JSONDecodeError):
         log.warning("cannot read %s", registry_path, exc_info=True)
         return {}
-    has_trimesh, has_cascadio = libraries_available()
     sources: dict[str, CadSource] = {}
     for part_id, entry in data.items():
         if part_id.startswith("_") or not isinstance(entry, dict):
@@ -117,13 +151,9 @@ def load_registry() -> dict[str, CadSource]:
         except (KeyError, TypeError, ValueError):
             log.warning("ignoring malformed CAD entry %r", part_id, exc_info=True)
             continue
-        if not source.path.exists():
-            continue
-        is_step = source.path.suffix.lower() in (".step", ".stp")
-        if not has_trimesh or (is_step and not has_cascadio):
-            log.info("CAD for %s found but %s is not installed; using the procedural model",
-                     part_id, "cascadio" if has_trimesh else "trimesh")
-            continue
+        if source.path.exists() and not source.readable():
+            log.info("CAD file for %s found but trimesh/cascadio is not installed; "
+                     "using its committed sprite", part_id)
         sources[part_id] = source
     return sources
 

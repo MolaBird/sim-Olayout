@@ -47,13 +47,6 @@
     "origin_mm": [0.0, 0.0, 5.59],
     "material": "anodized"
   },
-  "ER1.5": {
-    "_note": "origin: middle of the rod body",
-    "file": "ER1.5-Step.step",
-    "axes": ["y", "x", "-z"],
-    "origin_mm": [0.0, 0.0, 0.0],
-    "material": "steel"
-  },
   "PH2": {
     "_note": "origin: post axis on the table; thumbscrew toward +y",
     "file": "PH2-Step.step",

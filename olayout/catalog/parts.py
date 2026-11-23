@@ -262,18 +262,18 @@ def make_km100cp() -> PartSpec:
 
 
 KM100BP_FRONT_X = 0.58  # front face of the KM100BP, where the pellicle frame mounts
-BP1XX_FRAME_T = 0.18  # estimate: BP1xx frame thickness
-PELLICLE_PLANE_X = KM100BP_FRONT_X + BP1XX_FRAME_T  # the membrane, where the beam hits
+BP108_FRAME_T = 0.19  # estimate: BP108 frame thickness (Thorlabs gives OD Ø1.38", membrane Ø1")
+PELLICLE_PLANE_X = KM100BP_FRONT_X + BP108_FRAME_T  # the membrane, where the beam hits
 
 
 def make_km100bp() -> PartSpec:
-    """L-shaped kinematic mount for BP1xx pellicles (KM100BP drawing rev A + STEP).
+    """L-shaped kinematic mount for Ø1" pellicles (KM100BP drawing rev A + STEP).
 
     Both plates are L-brackets along the +y side and the bottom (front arms
     0.31" wide, back arms 0.48"), so the region around the beam is open.  The
     pellicle centre is 1.05" from the bottom and from the +y face; the #8
     holes are 1.00" from those faces.  The pellicle itself is the separate
-    BP1XX part (its frame screws to the front face).
+    BP108 part (its frame screws to the front face).
     """
     y_out, z_low = 1.05, -1.05  # back plate's outer +y face and bottom face
     z_top = z_low + 1.97
@@ -293,28 +293,32 @@ def make_km100bp() -> PartSpec:
         layer=Layer.OPTIC,
         prims=tuple(prims),
         taps=taps,
-        optic_slot=OpticSlot(seat_x=PELLICLE_PLANE_X, loading="centered", clear_aperture=0.90),
-        description="Kinematic mount for Ø1\" BP1xx pellicle beamsplitters.",
+        optic_slot=OpticSlot(seat_x=PELLICLE_PLANE_X, loading="centered", clear_aperture=1.00),
+        description="Kinematic mount for Ø1\" pellicle beamsplitters (BP108).",
     )
 
 
-def make_bp1xx() -> PartSpec:
-    """BP1xx pellicle beamsplitter: Ø1.38" frame, membrane on its front face.
+BP108_REFLECTANCE = 0.08  # 8:92 uncoated pellicle, 400-2400 nm
 
-    Origin = membrane centre; the frame extends behind it (toward -x), onto
-    the KM100BP's front face.  The beam is normally incident on the membrane side.
+
+def make_bp108() -> PartSpec:
+    """BP108 pellicle beamsplitter (8:92): 2 µm membrane on a Ø1.38" frame.
+
+    Origin = membrane centre, on the frame's front face; the frame extends
+    behind it (toward -x) onto the KM100BP.  The beam is normally incident on
+    the membrane side.
     """
-    t = BP1XX_FRAME_T
+    t = BP108_FRAME_T
     prims = (
         Cylinder("x", (-t / 2, 0.0, 0.0), 0.69, t, "anodized"),
-        Bore("x", (-t / 2, 0.0, 0.0), 0.50, t + 0.1),  # Ø1" membrane aperture
+        Bore("x", (-t / 2, 0.0, 0.0), 0.50, t + 0.1),  # Ø1" membrane
     )
     return PartSpec(
-        id="BP1XX",
-        name='BP1xx pellicle beamsplitter, Ø1"',
+        id="BP108",
+        name='BP108 pellicle beamsplitter, Ø1", 8:92',
         layer=Layer.OPTIC,
         prims=prims,
-        description="Pellicle membrane stretched over a Ø1.38\" frame.",
+        description="Uncoated 8:92 pellicle (2 µm membrane) on a Ø1.38\" frame.",
     )
 
 
@@ -435,18 +439,14 @@ def make_fiber_connector() -> PartSpec:
     return PartSpec(id="FIBER", name="FC/PC fiber connector", layer=Layer.OPTIC, prims=prims)
 
 
-ER15_LENGTH = 1.5  # ER1.5 rod body; 0.1" studs at both ends
+def cage_rod_prims(length: float) -> tuple[Primitive, ...]:
+    """A plain Ø6 mm ER cage rod of the given length along x, centred on its origin."""
+    return (Cylinder("x", (0.0, 0.0, 0.0), CAGE_ROD_RADIUS, length, "steel"),)
 
 
-def make_er15() -> PartSpec:
-    """One ER1.5 cage rod (Ø6 mm, 1.5" body) along x, centred on its origin."""
-    half = ER15_LENGTH / 2
-    prims = (
-        Cylinder("x", (0.0, 0.0, 0.0), CAGE_ROD_RADIUS, ER15_LENGTH, "steel"),
-        Cylinder("x", (half + 0.05, 0.0, 0.0), 0.05, 0.10, "steel_dark"),
-        Cylinder("x", (-half - 0.05, 0.0, 0.0), 0.05, 0.10, "steel_dark"),
-    )
-    return PartSpec(id="ER1.5", name='ER1.5 cage rod, 1.5"', layer=Layer.OPTIC, prims=prims)
+def make_cage_rod() -> PartSpec:
+    """ER cage rod; units build their own length with :func:`cage_rod_prims`."""
+    return PartSpec(id="ER", name="ER cage rod (Ø6 mm)", layer=Layer.OPTIC, prims=cage_rod_prims(1.5))
 
 
 # ==========================================================================
@@ -574,13 +574,13 @@ def _build_registry() -> dict[str, PartSpec]:
         make_km100(),
         make_km100cp(),
         make_km100bp(),
-        make_bp1xx(),
+        make_bp108(),
         make_fmp1(),
         make_kb1x1(),
         make_cp35(),
         make_sm1zb(),
         make_fiber_connector(),
-        make_er15(),
+        make_cage_rod(),
         make_ph2(),
         make_ph2(z_base=BE1_HEIGHT, part_id="PH2@BE1"),  # PH2 standing on a BE1
         make_be1(),

@@ -1,9 +1,9 @@
 """Qt pixmaps for rendered part sprites (one per part/orientation, cached).
 
-A part is drawn from its vendor CAD file when one is registered in
-``assets/cad/cad_parts.json`` (and the optional CAD libraries are
-installed); otherwise from its dimensioned primitive model.  Either way the
-top view is rendered once and then reused from memory / ``.cache/sprites``.
+A part registered in ``assets/cad/cad_parts.json`` is drawn from its vendor
+CAD file: the committed sprite in ``assets/sprites``, re-rendered when the
+local CAD file changes.  Every other part is drawn from its dimensioned
+primitive model, rendered once and then reused from ``.cache/sprites``.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from PySide6.QtGui import QImage, QPixmap
 
 from olayout import paths
 from olayout.catalog.units import PlacedPart
-from olayout.render import cad
+from olayout.render.cad_sprites import CadSprites
 from olayout.render.sprites import Sprite, SpriteCache
 
 log = logging.getLogger(__name__)
@@ -60,10 +60,9 @@ class SpriteStore:
     _instance: SpriteStore | None = None
 
     def __init__(self) -> None:
+        self._cad = CadSprites(paths.BAKED_SPRITES_DIR)
         self._cache = SpriteCache(paths.sprite_cache_dir())
         self._qt: dict[tuple, QtSprite] = {}
-        self._cad_sources = cad.load_registry()
-        self._cad_failed: set[str] = set()
 
     @classmethod
     def instance(cls) -> SpriteStore:
@@ -73,7 +72,7 @@ class SpriteStore:
 
     @property
     def cad_parts(self) -> list[str]:
-        return sorted(self._cad_sources)
+        return sorted(self._cad.registry)
 
     def get(self, part: PlacedPart) -> QtSprite:
         key = (part.part_id, part.prims, part.roll, part.z_offset)
@@ -84,23 +83,5 @@ class SpriteStore:
         return sprite
 
     def _render(self, part: PlacedPart) -> Sprite:
-        source = self._cad_sources.get(part.part_id)
-        if source is not None and part.part_id not in self._cad_failed:
-            try:
-                return self._cad_sprite(part, source)
-            except Exception:  # bad file, tessellation failure...: fall back, never crash
-                log.warning("CAD render failed for %s; using the primitive model", part.part_id, exc_info=True)
-                self._cad_failed.add(part.part_id)
-        return self._cache.get(part.sprite_name, part.prims)
-
-    def _cad_sprite(self, part: PlacedPart, source: cad.CadSource) -> Sprite:
-        roll = np.eye(3) if part.roll is None else np.asarray(part.roll, dtype=float)
-        identity = f"{source.fingerprint()}|{np.round(roll, 6).tolist()}|{part.z_offset:.6f}"
-
-        def mesh():
-            vertices, faces, colors = cad.part_mesh(source)
-            vertices = vertices @ roll.T
-            vertices[:, 2] += part.z_offset
-            return vertices, faces, colors
-
-        return self._cache.get_mesh(f"cad-{part.sprite_name}", identity, mesh, material=source.material)
+        sprite = self._cad.get(part.part_id, part.roll, part.z_offset)
+        return sprite if sprite is not None else self._cache.get(part.sprite_name, part.prims)

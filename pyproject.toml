@@ -22,3 +22,10 @@ include = ["olayout*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 qt_api = "pyside6"
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["F", "B"]
+ignore = ["B008", "B905"]  # frozen-dataclass defaults are fine; zip() lengths are checked where it matters

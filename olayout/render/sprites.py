@@ -2,8 +2,10 @@
 
 A :class:`Sprite` is a premultiplied RGBA image of a part seen from above,
 with the part-frame coordinates of its top-left corner so the UI can place
-it exactly.  Rendering happens once per part/orientation; afterwards the
-sprite is loaded from ``.cache/sprites``.
+it exactly.  Rendering happens once per part/orientation; afterwards a
+sprite drawn from a primitive model is loaded from ``.cache/sprites``.
+Sprites rendered from vendor CAD are committed instead, see
+:mod:`olayout.render.cad_sprites`.
 """
 
 from __future__ import annotations
@@ -84,7 +86,7 @@ def model_key(prims, ppi: float) -> str:
 
 
 class SpriteCache:
-    """Memory + disk cache of rendered sprites keyed by the model itself.
+    """Memory + disk cache of primitive-model sprites keyed by the model itself.
 
     Any change in a part's primitives (dimensions, materials, orientation)
     changes the key, so stale sprites are never shown.
@@ -106,27 +108,6 @@ class SpriteCache:
         sprite = self._memory.get(key)
         if sprite is None:
             sprite = self._load(name, key) or self._store(name, key, render_sprite(prims, self.ppi))
-            self._memory[key] = sprite
-        return sprite
-
-    def get_mesh(self, name: str, identity: str, mesh_fn, material: str | None = None) -> Sprite:
-        """Sprite of a CAD mesh; ``identity`` must change whenever the mesh does.
-
-        ``mesh_fn()`` returns (vertices, faces, colors) and is only called on
-        a cache miss.  A ``material`` replaces the mesh's own colours.
-        """
-        text = f"mesh|v{RENDER_VERSION}|{self.ppi}|{SUPERSAMPLE}|{identity}|{material}"
-        key = hashlib.sha1(text.encode()).hexdigest()[:16]
-        sprite = self._memory.get(key)
-        if sprite is None:
-            sprite = self._load(name, key)
-            if sprite is None:
-                vertices, faces, colors = mesh_fn()
-                if material is not None:
-                    sprite = render_mesh_sprite(vertices, faces, None, self.ppi, material=material)
-                else:
-                    sprite = render_mesh_sprite(vertices, faces, colors, self.ppi)
-                sprite = self._store(name, key, sprite)
             self._memory[key] = sprite
         return sprite
 

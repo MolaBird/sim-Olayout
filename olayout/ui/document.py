@@ -16,7 +16,7 @@ from PySide6.QtGui import QUndoCommand, QUndoStack
 
 from olayout.catalog.units import Mounting, get_unit_type, new_component_params, set_param
 from olayout.core.breadboard import Breadboard
-from olayout.core.layout import Component, Layout, Measurement, Probe
+from olayout.core.layout import Component, IssueKey, Layout, Measurement, Probe
 from olayout.core.units import normalize_angle
 from olayout.engine.analysis import Analysis, Analyzer
 
@@ -228,7 +228,7 @@ class LayoutDocument(QObject):
             return
 
         def mutate(layout: Layout) -> None:
-            layout.components = [c for c in layout.components if c.id not in doomed]
+            layout.remove_components(doomed)
 
         self.apply(f"Delete {len(doomed)} item(s)", mutate)
 
@@ -348,6 +348,24 @@ class LayoutDocument(QObject):
 
         if self.apply("Clear measurements and probes", mutate, changed=set()):
             self.annotationsChanged.emit()
+
+    def set_ignored(self, keys: Iterable[IssueKey], ignored: bool = True) -> None:
+        """Accept problems (they stop counting as illegal) or restore them; undoable."""
+        keys = set(keys)
+        if not keys:
+            return
+
+        def mutate(layout: Layout) -> None:
+            layout.ignored = layout.ignored | keys if ignored else layout.ignored - keys
+
+        verb = "Ignore" if ignored else "Restore"
+        self.apply(f"{verb} {len(keys)} problem(s)", mutate, changed=set())
+
+    def restore_all_ignored(self) -> None:
+        def mutate(layout: Layout) -> None:
+            layout.ignored = set()
+
+        self.apply("Restore ignored problems", mutate, changed=set())
 
     def set_breadboard(self, board: Breadboard) -> None:
         def mutate(layout: Layout) -> None:

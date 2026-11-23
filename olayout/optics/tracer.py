@@ -13,10 +13,12 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field, replace
+from enum import Enum
 
 import numpy as np
 
 from olayout.core.geometry import normalize, polygon_edges, ray_segment_hits, reflect, unit_vector
+from olayout.core.layout import IssueKey
 from olayout.optics.elements import Blocker, Emitter, OpticalElement, OpticKind
 from olayout.optics.gaussian import GaussianBeam, aperture_transmission, mirror_focal_lengths
 
@@ -86,11 +88,22 @@ class BeamSegment:
         return [s] if 0.0 <= s <= self.length else []
 
 
+class WarningKind(str, Enum):
+    CLIPPED = "clipped"  # an aperture cuts off part of the beam
+    OWN_MOUNT = "own-mount"  # a beam leaving an optic runs into that optic's own mount
+    SEGMENT_LIMIT = "segment-limit"  # tracing stopped early (e.g. light trapped in a cavity)
+
+
 @dataclass(frozen=True)
 class TraceWarning:
-    owner: str
+    kind: WarningKind
+    owner: str  # component id
     message: str
     point: tuple[float, float]
+
+    @property
+    def key(self) -> IssueKey:
+        return IssueKey.of(self.kind.value, [self.owner] if self.owner else [])
 
 
 @dataclass
@@ -215,7 +228,9 @@ class BeamTracer:
         while stack:
             ray = stack.pop()
             if len(result.segments) >= self.max_segments:
-                result.warnings.append(TraceWarning(ray.source, "Beam segment limit reached", tuple(ray.origin)))
+                result.warnings.append(TraceWarning(
+                        WarningKind.SEGMENT_LIMIT, ray.source, "Beam segment limit reached", tuple(ray.origin)
+                    ))
                 return
             self._step(ray, result, stack, min_power)
 
@@ -261,7 +276,9 @@ class BeamTracer:
         if clip < CLIP_WARN:
             name = element.name or element.owner
             result.warnings.append(
-                TraceWarning(element.owner, f"{name}: beam clipped, {100 * clip:.1f}% passes", (hit[0], hit[1]))
+                TraceWarning(
+                    WarningKind.CLIPPED, element.owner, f"{name}: beam clipped, {100 * clip:.1f}% passes", (hit[0], hit[1])
+                )
             )
         result.segments.append(
             BeamSegment(length=t, end_event=event, end_owner=element.owner, clip=clip, **common)
@@ -297,7 +314,7 @@ class BeamTracer:
             message = f"{name}: the transmitted beam hits its own mount; try the other mounting orientation (F)"
         else:
             message = f"{name}: the reflected beam hits its own mount"
-        result.warnings.append(TraceWarning(owner, message, (float(point[0]), float(point[1]))))
+        result.warnings.append(TraceWarning(WarningKind.OWN_MOUNT, owner, message, (float(point[0]), float(point[1]))))
 
     def _interact(self, element: OpticalElement, hit, d, state: BeamState):
         """Return (children [(direction, state, "transmitted"|"reflected")], event, clip fraction)."""

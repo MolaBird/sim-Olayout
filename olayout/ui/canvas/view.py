@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import math
 
-from PySide6.QtCore import QPoint, QPointF, Qt, Signal
-from PySide6.QtGui import QKeyEvent, QMouseEvent, QPainter, QWheelEvent
+from PySide6.QtCore import QEvent, QPoint, QPointF, Qt, Signal
+from PySide6.QtGui import QCursor, QInputDevice, QKeyEvent, QMouseEvent, QPainter, QWheelEvent
 from PySide6.QtWidgets import QFrame, QGraphicsView
 
 from olayout.ui.canvas.scene import LayoutScene
@@ -15,6 +15,10 @@ from olayout.ui.document import LayoutDocument
 
 UNIT_MIME = "application/x-olayout-unit"
 MIN_PPI, MAX_PPI = 3.0, 4000.0
+WHEEL_ZOOM_BASE = 1.0015  # per 1/8° of wheel rotation: ~1.2x per notch
+ALT = Qt.KeyboardModifier.AltModifier
+CTRL = Qt.KeyboardModifier.ControlModifier
+SHIFT = Qt.KeyboardModifier.ShiftModifier
 
 
 class LayoutView(QGraphicsView):
@@ -41,7 +45,8 @@ class LayoutView(QGraphicsView):
         self.setOptimizationFlag(QGraphicsView.OptimizationFlag.DontSavePainterState, False)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+        # Zooming is anchored by hand (zoom_at), so Qt must not move the view itself.
+        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.NoAnchor)
         self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setMouseTracking(True)
@@ -59,6 +64,7 @@ class LayoutView(QGraphicsView):
         self._pan_button: Qt.MouseButton | None = None
         self._pan_moved = False
         self._space_held = False
+        self._scroll_rest = QPointF(0.0, 0.0)  # sub-pixel part of pending scrolls
         self._drop_tool: PlaceTool | None = None
         doc.layoutReset.connect(self._on_reset)
 
@@ -88,15 +94,36 @@ class LayoutView(QGraphicsView):
         scene_pos = self.mapToScene(view_pos)
         return scene_pos, scene_pos.x(), -scene_pos.y()
 
-    # ================================================================= zoom
-    def zoom_by(self, factor: float, at_cursor: bool = True) -> None:
+    # ========================================================== zoom & pan
+    def scroll_by(self, dx: float, dy: float) -> None:
+        """Move the view by (dx, dy) pixels, keeping fractions for the next call."""
+        total = self._scroll_rest + QPointF(dx, dy)
+        ix, iy = round(total.x()), round(total.y())
+        self._scroll_rest = QPointF(total.x() - ix, total.y() - iy)
+        h, v = self.horizontalScrollBar(), self.verticalScrollBar()
+        h.setValue(h.value() + ix)
+        v.setValue(v.value() + iy)
+
+    def zoom_at(self, factor: float, view_pos: QPointF) -> None:
+        """Zoom by ``factor`` keeping the board point under ``view_pos`` fixed."""
         current = self.pixels_per_inch()
         factor = min(max(factor, MIN_PPI / current), MAX_PPI / current)
-        if not at_cursor:
-            self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
+        if abs(factor - 1.0) < 1e-12:
+            return
+        anchor = self.viewportTransform().inverted()[0].map(QPointF(view_pos))
         self.scale(factor, factor)
-        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+        moved_to = self.viewportTransform().map(anchor)
+        self.scroll_by(moved_to.x() - view_pos.x(), moved_to.y() - view_pos.y())
         self.zoomChanged.emit(self.pixels_per_inch())
+
+    def zoom_by(self, factor: float, at_cursor: bool = True) -> None:
+        centre = QPointF(self.viewport().width() / 2, self.viewport().height() / 2)
+        pos = centre
+        if at_cursor:
+            cursor = self.viewport().mapFromGlobal(QCursor.pos())
+            if self.viewport().rect().contains(cursor):
+                pos = QPointF(cursor)
+        self.zoom_at(factor, pos)
 
     def fit_board(self) -> None:
         rect = self.layout_scene.board_rect().adjusted(-1.2, -1.2, 1.2, 1.2)
@@ -112,19 +139,33 @@ class LayoutView(QGraphicsView):
 
     # ================================================================ input
     def wheelEvent(self, ev: QWheelEvent) -> None:  # noqa: N802
-        delta = ev.angleDelta().y() or ev.angleDelta().x()
-        if delta == 0:
-            return
+        """Wheel zooms about the cursor (Ctrl+wheel and touchpad pinch too);
+        touchpad two-finger scroll and Shift+wheel pan; Alt+wheel rotates."""
         mods = ev.modifiers()
-        if mods & Qt.KeyboardModifier.ControlModifier:
-            step = 1.0 if mods & Qt.KeyboardModifier.ShiftModifier else 5.0
-            self.rotate_selection(step * (1 if delta > 0 else -1))
+        angle, pixel = ev.angleDelta(), ev.pixelDelta()
+        delta = angle.y() or angle.x()  # some platforms swap axes for Alt/Shift
+        if mods & ALT:
+            if delta:
+                step = 1.0 if mods & SHIFT else 5.0
+                self.rotate_selection(step * (1 if delta > 0 else -1))
             return
-        if mods & Qt.KeyboardModifier.ShiftModifier:
-            bar = self.horizontalScrollBar()
-            bar.setValue(bar.value() - delta)
+        device = ev.pointingDevice()
+        touchpad = device is not None and device.type() == QInputDevice.DeviceType.TouchPad
+        if touchpad and not mods & CTRL:
+            step = pixel if not pixel.isNull() else angle / 4
+            self.scroll_by(-step.x(), -step.y())
             return
-        self.zoom_by(1.0015 ** delta)
+        if mods & SHIFT and not mods & CTRL:
+            self.scroll_by(-delta, 0.0)
+            return
+        if delta:
+            self.zoom_at(WHEEL_ZOOM_BASE**delta, ev.position())
+
+    def viewportEvent(self, ev) -> bool:  # noqa: N802
+        if ev.type() == QEvent.Type.NativeGesture and ev.gestureType() == Qt.NativeGestureType.ZoomNativeGesture:
+            self.zoom_at(1.0 + ev.value(), ev.position())  # trackpad pinch (macOS / precision touchpads)
+            return True
+        return super().viewportEvent(ev)
 
     def rotate_selection(self, delta: float) -> None:
         if isinstance(self.tool, PlaceTool):
@@ -159,8 +200,7 @@ class LayoutView(QGraphicsView):
             if abs(delta.x()) + abs(delta.y()) > 2:
                 self._pan_moved = True
             self._pan_origin = pos
-            self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - delta.x())
-            self.verticalScrollBar().setValue(self.verticalScrollBar().value() - delta.y())
+            self.scroll_by(-delta.x(), -delta.y())
             return
         scene_pos, mx, my = self.model_pos(ev.position().toPoint())
         self.cursorMoved.emit(mx, my)

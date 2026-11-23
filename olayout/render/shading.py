@@ -125,6 +125,10 @@ def shade(gbuffer: GBuffer, supersample: int = 1):
     rgba = np.clip(np.round(premultiplied * 255.0), 0, 255).astype(np.uint8)
 
     coverage = _downsample(alpha, supersample)
-    shadow_px = max(1, round(0.05 * ppi / supersample))
-    shadow = np.clip(box_blur(box_blur(coverage, shadow_px), shadow_px), 0.0, 1.0).astype(np.float32)
-    return rgba, shadow
+    return rgba, shadow_from_coverage(coverage, ppi / supersample)
+
+
+def shadow_from_coverage(coverage: np.ndarray, ppi: float) -> np.ndarray:
+    """Soft drop-shadow mask (0..1) from a sprite's alpha coverage (0..1)."""
+    shadow_px = max(1, round(0.05 * ppi))
+    return np.clip(box_blur(box_blur(coverage, shadow_px), shadow_px), 0.0, 1.0).astype(np.float32)

@@ -143,6 +143,39 @@ class Probe:
         )
 
 
+@dataclass(frozen=True, order=True)
+class IssueKey:
+    """Identity of a placement problem or beam warning, stable across analyses.
+
+    The layout keeps the keys of the problems the user chose to ignore
+    (accept), so the choice survives edits, undo and saving.
+    """
+
+    kind: str  # e.g. "overlap", "off-hole", "clipped"
+    components: tuple[str, ...]  # ids of the components involved, sorted
+    layer: str = ""  # overlaps only: "base" or "optic"
+
+    @classmethod
+    def of(cls, kind: str, components, layer: str = "") -> IssueKey:
+        return cls(kind, tuple(sorted(components)), layer)
+
+    def involves(self, component_ids) -> bool:
+        return not set(self.components).isdisjoint(component_ids)
+
+    def to_dict(self) -> dict:
+        data: dict[str, Any] = {"kind": self.kind, "components": list(self.components)}
+        if self.layer:
+            data["layer"] = self.layer
+        return data
+
+    @classmethod
+    def from_dict(cls, data: Any) -> IssueKey:
+        valid = isinstance(data, dict) and isinstance(data.get("kind"), str) and isinstance(data.get("components"), list)
+        if not valid:
+            raise LayoutFormatError(f"ignored entries need 'kind' and 'components', got {data!r}")
+        return cls.of(data["kind"], (str(c) for c in data["components"]), str(data.get("layer", "")))
+
+
 @dataclass
 class Layout:
     breadboard: Breadboard = field(default_factory=Breadboard)
@@ -150,6 +183,7 @@ class Layout:
     measurements: list[Measurement] = field(default_factory=list)
     probes: list[Probe] = field(default_factory=list)
     notes: str = ""
+    ignored: set[IssueKey] = field(default_factory=set)  # problems the user accepted
 
     # -------------------------------------------------------------- lookup
     def component(self, component_id: str) -> Component | None:
@@ -157,6 +191,13 @@ class Layout:
             if comp.id == component_id:
                 return comp
         return None
+
+    def remove_components(self, ids) -> None:
+        """Delete components and forget the ignored problems that involved them
+        (a later component may get the same id)."""
+        doomed = set(ids)
+        self.components = [c for c in self.components if c.id not in doomed]
+        self.ignored = {key for key in self.ignored if not key.involves(doomed)}
 
     def all_ids(self) -> set[str]:
         return {c.id for c in self.components} | {m.id for m in self.measurements} | {p.id for p in self.probes}
@@ -186,6 +227,8 @@ class Layout:
         }
         if self.notes:
             data["notes"] = self.notes
+        if self.ignored:
+            data["ignored"] = [key.to_dict() for key in sorted(self.ignored)]
         return data
 
     @classmethod
@@ -207,7 +250,12 @@ class Layout:
             probes=[Probe.from_dict(p) for p in data.get("probes", [])],
             notes=str(data.get("notes", "")),
         )
+        ignored = data.get("ignored", [])
+        if not isinstance(ignored, list):
+            raise LayoutFormatError(f"'ignored' must be a list, got {ignored!r}")
         layout._repair_ids()
+        present = {c.id for c in layout.components}
+        layout.ignored = {key for key in map(IssueKey.from_dict, ignored) if set(key.components) <= present}
         return layout
 
     def _repair_ids(self) -> None:

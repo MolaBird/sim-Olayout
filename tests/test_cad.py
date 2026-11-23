@@ -73,7 +73,8 @@ def test_cad_registry_aligns_mesh(tmp_path, monkeypatch):
     cad.load_registry.cache_clear()
     try:
         registry = cad.load_registry()
-        assert set(registry) == {"CUBE"}  # entries without files are skipped
+        assert set(registry) == {"CUBE", "MISSING"}  # kept: a committed sprite may exist
+        assert registry["CUBE"].readable() and not registry["MISSING"].readable()
         verts, tri, colors = cad.part_mesh(registry["CUBE"])
         # part x = CAD z, part y = CAD x, part z = CAD y; origin moved to (10, 20, 30) mm.
         assert verts.min(axis=0) == pytest.approx([0.0, 0.0, 0.0], abs=1e-9)

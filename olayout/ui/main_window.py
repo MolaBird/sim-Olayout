@@ -48,9 +48,11 @@ SHORTCUTS_HELP = """
 <tr><td><b>Drag blue handle</b></td><td>rotate (15° steps · Shift free · Ctrl 1°)</td></tr>
 <tr><td><b>Alt + drag handle</b></td><td>aim a mirror: reflect the incoming beam toward the cursor</td></tr>
 <tr><td><b>Alt + drag</b></td><td>move without snapping</td></tr>
-<tr><td><b>Wheel</b></td><td>zoom · Shift+wheel pan sideways · Ctrl+wheel rotate selection</td></tr>
+<tr><td><b>Wheel</b></td><td>zoom about the cursor · Shift+wheel pan sideways</td></tr>
+<tr><td><b>Alt + wheel</b></td><td>rotate the selection 5° (with Shift 1°)</td></tr>
+<tr><td><b>Touchpad</b></td><td>two-finger scroll pans · pinch (or Ctrl+scroll) zooms</td></tr>
 <tr><td><b>Middle / right drag, Space+drag</b></td><td>pan</td></tr>
-<tr><td><b>Right click</b></td><td>context menu</td></tr>
+<tr><td><b>Right click</b></td><td>context menu (also: ignore a part's placement problems)</td></tr>
 <tr><td><b>Hover a beam</b></td><td>beam radius, waist, curvature, power at that point</td></tr>
 </table>
 <h3>Keys</h3>
@@ -306,8 +308,10 @@ class MainWindow(QMainWindow):
         self.hole_label.setText(f"hole {hole[0]}, {hole[1]}" if (hole and near) else "")
 
     def _update_issue_status(self) -> None:
-        count = len(self.doc.analysis.issues)
-        self.issues_button.setText("✓ placement OK" if count == 0 else f"⚠ {count} placement problem(s)")
+        count = len(self.doc.analysis.active_issues)
+        n_ignored = len(self.doc.layout.ignored)
+        text = "✓ placement OK" if count == 0 else f"⚠ {count} placement problem(s)"
+        self.issues_button.setText(text + (f" ({n_ignored} ignored)" if n_ignored else ""))
         self.issues_button.setStyleSheet("color: #3ecf8e;" if count == 0 else "color: #ff4d5e; font-weight: 600;")
 
     def _on_tool_changed(self, name: str) -> None:
@@ -416,11 +420,24 @@ class MainWindow(QMainWindow):
             menu.addActions([self.act_rot90, self.act_rotm90, self.act_rot15, self.act_rotm15, self.act_orient])
             menu.addSeparator()
             menu.addActions([self.act_duplicate, self.act_copy, self.act_cut, self.act_delete])
+            self._add_ignore_actions(menu, comp_id)
         else:
             menu.addActions([self.act_paste, self.act_source, self.act_select_all])
             menu.addSeparator()
             menu.addActions([self.act_fit, self.act_ghost])
         menu.exec(global_pos)
+
+    def _add_ignore_actions(self, menu: QMenu, comp_id: str) -> None:
+        """Accept (or stop accepting) the problems of the component under the cursor."""
+        active = self.doc.analysis.active_keys_for(comp_id)
+        ignored = [key for key in self.doc.layout.ignored if comp_id in key.components]
+        if not active and not ignored:
+            return
+        menu.addSeparator()
+        if active:
+            menu.addAction(f"Ignore {len(active)} problem(s) here", lambda: self.doc.set_ignored(active, True))
+        if ignored:
+            menu.addAction(f"Restore {len(ignored)} ignored problem(s)", lambda: self.doc.set_ignored(ignored, False))
 
     # =============================================================== files
     def _confirm_discard(self) -> bool:

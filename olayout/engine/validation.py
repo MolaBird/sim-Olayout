@@ -11,6 +11,7 @@ from shapely.geometry import box
 from olayout.catalog.parts import Layer
 from olayout.catalog.units import Mounting
 from olayout.core.breadboard import Breadboard
+from olayout.core.layout import IssueKey
 from olayout.engine.world import PlacedUnit
 
 OVERLAP_AREA = 1e-4  # square inches; touching parts are fine
@@ -32,6 +33,10 @@ class Issue:
     component_ids: tuple[str, ...]
     layer: Layer | None = None
     region: object | None = None  # world-frame shapely geometry to highlight
+
+    @property
+    def key(self) -> IssueKey:
+        return IssueKey.of(self.kind.value, self.component_ids, self.layer.value if self.layer else "")
 
 
 def _name(unit: PlacedUnit) -> str:

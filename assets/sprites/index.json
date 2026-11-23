@@ -1,0 +1,140 @@
+{
+  "_comment": "Top-down part sprites rendered from the vendor CAD files in assets/cad, which are not committed. Regenerate with `python -m olayout.tools.bake_sprites`; the app also refreshes a sprite whenever its CAD file changes locally.",
+  "sprites": {
+    "BE1-bf23d0c3853d": {
+      "part": "BE1",
+      "x0": -0.744619,
+      "y1": 0.745,
+      "ppi": 200.0,
+      "z_top": 0.485039,
+      "source_sha1": "b7ea2d0bd31aa24668a1e238f33c888a9434c2eb",
+      "renderer": "render v3, mesh v1, 200 ppi, x2, margin 0.12\", material steel"
+    },
+    "CF125C-e485fb755431": {
+      "part": "CF125C",
+      "x0": -0.27,
+      "y1": 0.835,
+      "ppi": 200.0,
+      "z_top": 0.479843,
+      "source_sha1": "52db735e427a8875950b199da28a78bd3ef45d39",
+      "renderer": "render v3, mesh v1, 200 ppi, x2, margin 0.12\", material steel"
+    },
+    "CP35-19e5bc0fda58": {
+      "part": "CP35",
+      "x0": -0.470197,
+      "y1": 0.92,
+      "ppi": 200.0,
+      "z_top": 0.8,
+      "source_sha1": "b1e9068e64a33af49afc5c04a38ff35edfe5c44c",
+      "renderer": "render v3, mesh v1, 200 ppi, x2, margin 0.12\", material anodized"
+    },
+    "FMP1-3fd9bd0656ef": {
+      "part": "FMP1",
+      "x0": -0.245,
+      "y1": 0.74,
+      "ppi": 200.0,
+      "z_top": 0.7,
+      "source_sha1": "83f4fd827996a69a021399165f7ed73d7b473fba",
+      "renderer": "render v3, mesh v1, 200 ppi, x2, margin 0.12\", material anodized"
+    },
+    "KB1X1-21878c4557e8": {
+      "part": "KB1X1",
+      "x0": -0.620177,
+      "y1": 0.620155,
+      "ppi": 200.0,
+      "z_top": -1.049998,
+      "source_sha1": "9f8d90985157bda6a3f1d51f7c6b36213f51d5a6",
+      "renderer": "render v3, mesh v1, 200 ppi, x2, margin 0.12\", material anodized_light"
+    },
+    "KM100-726c6195b54a": {
+      "part": "KM100",
+      "x0": -1.038159,
+      "y1": 1.144667,
+      "ppi": 200.0,
+      "z_top": 1.040138,
+      "source_sha1": "6cad09761149de3fb0b9e2fcde1e082708a3288b",
+      "renderer": "render v3, mesh v1, 200 ppi, x2, margin 0.12\", material anodized"
+    },
+    "KM100-bcd257fb9044": {
+      "part": "KM100",
+      "x0": -1.038159,
+      "y1": 1.160138,
+      "ppi": 200.0,
+      "z_top": 1.039589,
+      "source_sha1": "6cad09761149de3fb0b9e2fcde1e082708a3288b",
+      "renderer": "render v3, mesh v1, 200 ppi, x2, margin 0.12\", material anodized"
+    },
+    "KM100BP-b0ed472b5aa8": {
+      "part": "KM100BP",
+      "x0": -1.011139,
+      "y1": 1.194616,
+      "ppi": 200.0,
+      "z_top": 0.990054,
+      "source_sha1": "525bccb3381f8dda7736dede551ec6b5a934e0a9",
+      "renderer": "render v3, mesh v1, 200 ppi, x2, margin 0.12\", material anodized"
+    },
+    "KM100BP-becc24fc649e": {
+      "part": "KM100BP",
+      "x0": -1.011139,
+      "y1": 1.110054,
+      "ppi": 200.0,
+      "z_top": 0.990099,
+      "source_sha1": "525bccb3381f8dda7736dede551ec6b5a934e0a9",
+      "renderer": "render v3, mesh v1, 200 ppi, x2, margin 0.12\", material anodized"
+    },
+    "KM100CP-143647cf540c": {
+      "part": "KM100CP",
+      "x0": -1.538102,
+      "y1": 1.369826,
+      "ppi": 200.0,
+      "z_top": 1.039742,
+      "source_sha1": "0bce64b20c9c67801ac9ee760282d7015fc5bb28",
+      "renderer": "render v3, mesh v1, 200 ppi, x2, margin 0.12\", material anodized"
+    },
+    "KM100CP-19ca6fc7f921": {
+      "part": "KM100CP",
+      "x0": -1.538102,
+      "y1": 1.159742,
+      "ppi": 200.0,
+      "z_top": 1.039802,
+      "source_sha1": "0bce64b20c9c67801ac9ee760282d7015fc5bb28",
+      "renderer": "render v3, mesh v1, 200 ppi, x2, margin 0.12\", material anodized"
+    },
+    "PH2-bf2d7e833d70": {
+      "part": "PH2",
+      "x0": -0.612126,
+      "y1": 1.022126,
+      "ppi": 200.0,
+      "z_top": 2.0,
+      "source_sha1": "63cf1292908c7971348c982f2ede876c0e566704",
+      "renderer": "render v3, mesh v1, 200 ppi, x2, margin 0.12\", material anodized"
+    },
+    "PH2_BE1-424c196dc328": {
+      "part": "PH2@BE1",
+      "x0": -0.612126,
+      "y1": 1.022126,
+      "ppi": 200.0,
+      "z_top": 2.185039,
+      "source_sha1": "63cf1292908c7971348c982f2ede876c0e566704",
+      "renderer": "render v3, mesh v1, 200 ppi, x2, margin 0.12\", material anodized"
+    },
+    "SM1ZB-236bde2bd1f0": {
+      "part": "SM1ZB",
+      "x0": -0.403284,
+      "y1": 0.92,
+      "ppi": 200.0,
+      "z_top": 1.684,
+      "source_sha1": "e0702166ae776f199d228270cd93f4060909d1fc",
+      "renderer": "render v3, mesh v1, 200 ppi, x2, margin 0.12\", material anodized"
+    },
+    "SM1ZB-cce36c33dcfa": {
+      "part": "SM1ZB",
+      "x0": -1.832685,
+      "y1": 1.484967,
+      "ppi": 200.0,
+      "z_top": 1.684,
+      "source_sha1": "e0702166ae776f199d228270cd93f4060909d1fc",
+      "renderer": "render v3, mesh v1, 200 ppi, x2, margin 0.12\", material anodized"
+    }
+  }
+}

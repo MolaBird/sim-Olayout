@@ -15,11 +15,11 @@ from dataclasses import dataclass, field
 from olayout.catalog.parts import Layer
 from olayout.catalog.units import ForkPlacement, Mounting
 from olayout.core.breadboard import Breadboard
-from olayout.core.layout import Layout
+from olayout.core.layout import IssueKey, Layout
 from olayout.engine.fork import resolve_fork
 from olayout.engine.validation import Issue, IssueKind, find_issues
 from olayout.engine.world import BuildCache, PlacedUnit
-from olayout.optics.tracer import BeamTracer, TraceResult
+from olayout.optics.tracer import BeamTracer, TraceResult, TraceWarning
 
 log = logging.getLogger(__name__)
 
@@ -32,15 +32,40 @@ BASE_INTERACTION = 6.5
 @dataclass
 class Analysis:
     units: dict[str, PlacedUnit] = field(default_factory=dict)
-    issues: list[Issue] = field(default_factory=list)
+    issues: list[Issue] = field(default_factory=list)  # every problem found, ignored or not
     trace: TraceResult = field(default_factory=TraceResult)
+    ignored: frozenset[IssueKey] = frozenset()  # problems the user accepted (from the layout)
+
+    # Ignored problems are still found and listed, but no longer make a
+    # placement illegal or count as problems.
+    @property
+    def active_issues(self) -> list[Issue]:
+        return [i for i in self.issues if i.key not in self.ignored]
+
+    @property
+    def ignored_issues(self) -> list[Issue]:
+        return [i for i in self.issues if i.key in self.ignored]
+
+    @property
+    def active_warnings(self) -> list[TraceWarning]:
+        return [w for w in self.trace.warnings if w.key not in self.ignored]
+
+    @property
+    def ignored_warnings(self) -> list[TraceWarning]:
+        return [w for w in self.trace.warnings if w.key in self.ignored]
 
     @property
     def illegal_ids(self) -> set[str]:
-        return {cid for issue in self.issues for cid in issue.component_ids}
+        return {cid for issue in self.active_issues for cid in issue.component_ids}
 
     def issues_for(self, component_id: str) -> list[Issue]:
-        return [i for i in self.issues if component_id in i.component_ids]
+        """Active placement problems involving a component."""
+        return [i for i in self.active_issues if component_id in i.component_ids]
+
+    def active_keys_for(self, component_id: str) -> list[IssueKey]:
+        """Keys of the active problems and beam warnings involving a component."""
+        found = [*self.active_issues, *self.active_warnings]
+        return list(dict.fromkeys(item.key for item in found if component_id in item.key.components))
 
 
 class Analyzer:
@@ -61,7 +86,7 @@ class Analyzer:
 
     # ------------------------------------------------------------------ run
     def run(self, layout: Layout) -> Analysis:
-        result = Analysis()
+        result = Analysis(ignored=frozenset(layout.ignored))
         board = layout.breadboard
 
         # 1. Build every component (cached by type/orientation/label/params).

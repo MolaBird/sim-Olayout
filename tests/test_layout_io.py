@@ -3,7 +3,7 @@ import json
 import pytest
 
 from olayout.core.breadboard import Breadboard
-from olayout.core.layout import Component, Layout, LayoutFormatError, Measurement, Probe
+from olayout.core.layout import Component, IssueKey, Layout, LayoutFormatError, Measurement, Probe
 from olayout.core.units import format_fraction, normalize_angle
 
 from conftest import make_component
@@ -93,3 +93,27 @@ def test_breadboard_holes():
     assert board.hole_at(0.6, 0.5) is None
     ring = board.holes_in_annulus(5.0, 5.0, 0.5, 1.0)
     assert len(ring) == 4  # the four diagonal neighbours at 0.707"
+
+
+def test_ignored_problems_are_saved_and_follow_their_components():
+    layout = sample_layout()
+    laser, mirror = layout.components[0], layout.components[1]
+    overlap = IssueKey.of("overlap", [mirror.id, laser.id], "optic")
+    clipped = IssueKey.of("clipped", [laser.id])
+    layout.ignored = {overlap, clipped}
+    data = json.loads(layout.to_json())
+    assert {"kind": "overlap", "components": sorted([laser.id, mirror.id]), "layer": "optic"} in data["ignored"]
+    assert Layout.from_json(layout.to_json()).ignored == layout.ignored
+
+    data["ignored"].append({"kind": "off-hole", "components": ["c999"]})  # no such component
+    assert Layout.from_dict(data).ignored == layout.ignored
+
+    layout.remove_components([mirror.id])  # a later component may reuse the id
+    assert layout.ignored == {clipped}
+    assert "ignored" not in Layout().to_dict()
+
+
+@pytest.mark.parametrize("ignored", ["all", [{"kind": "overlap"}], [{"components": ["c1"]}], [3]])
+def test_malformed_ignored_entries_are_rejected(ignored):
+    with pytest.raises(LayoutFormatError):
+        Layout.from_dict({"ignored": ignored})

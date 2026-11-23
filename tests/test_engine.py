@@ -5,12 +5,13 @@ import math
 import pytest
 
 from olayout.catalog.parts import PARTS, Layer
-from olayout.catalog.units import collimator_lens_range
+from olayout.catalog.units import DEFAULT_ROD_LENGTH, collimator_lens_range
 from olayout.core.breadboard import Breadboard
-from olayout.core.layout import Layout
+from olayout.core.layout import IssueKey, Layout
 from olayout.core.units import MM, NM, UM
 from olayout.engine.analysis import Analyzer
 from olayout.engine.validation import IssueKind
+from olayout.optics.tracer import WarningKind
 
 from conftest import make_component
 
@@ -152,7 +153,7 @@ def test_collimator_output_is_collimated():
     assert -out.state.tangential.distance_from_waist == pytest.approx(25.4 * MM, rel=1e-6)
 
 
-def test_collimator_lens_distance_limited_by_er15_rods():
+def test_collimator_lens_distance_limited_by_cage_rods():
     """The CP35 slides on 1.5" rods that must stay in the SM1ZB plate."""
     near = collimator_lens_range("top")  # housing toward the fiber
     far = collimator_lens_range("top-flipped")  # housing toward the lens: CP35 must clear it
@@ -188,7 +189,7 @@ def test_sm1zb_hangs_inverted_from_its_top_hole():
 
 def test_pellicle_splits_on_its_front_face():
     layout = Layout()
-    # The beam (+x) meets the membrane on the front of the BP1xx frame at 20° incidence.
+    # The beam (+x) meets the membrane on the front of the BP108 frame at 20° incidence.
     bs = make_component(layout, "mag-km-pellicle", 0.0, 0.0, angle=160.0)
     bs.params["optic"]["reflectance"] = 0.4
     result = analyze(layout)
@@ -203,8 +204,8 @@ def test_pellicle_splits_on_its_front_face():
     assert transmitted.end_event == "escaped"  # out through the open side of the L-shaped plates
 
 
-def _splitter_at_45(angle: float, orientation: str = ""):
-    layout = Layout()
+def _splitter_at_45(angle: float, orientation: str = "", layout: Layout | None = None):
+    layout = Layout() if layout is None else layout
     bs = make_component(layout, "km-mirror", 0.0, 0.0, angle=angle)
     bs.params["optic"]["kind"] = "splitter"
     bs.orientation = orientation
@@ -278,3 +279,67 @@ def test_build_cache_survives_moves():
     comp.x += 0.37
     second = analyzer.run(layout).units[comp.id].build
     assert first is second
+
+
+def test_pellicle_unit_is_km100bp_with_bp108():
+    layout = Layout()
+    bs = make_component(layout, "mag-km-pellicle", 0.0, 0.0, angle=160.0)
+    result = analyze(layout)
+    assert {"KM100BP", "BP108", "KB1X1"} <= {p.part_id for p in result.units[bs.id].build.parts}
+    cx, cy = optic_center(result, bs)
+    bs.x += 8.0 - cx
+    bs.y += 6.0 - cy
+    make_component(layout, "laser", 2.0, 6.0)
+    children = [s for s in analyze(layout).trace.segments if s.parent == 0]
+    assert sorted(round(s.state.power, 6) for s in children) == [0.08, 0.92]  # BP108: 8:92 (R:T)
+
+
+def test_cage_rod_length_sets_the_lens_range_and_is_drawn():
+    short, long = collimator_lens_range("top"), collimator_lens_range("top", 4.0)
+    assert long[0] == pytest.approx(short[0])
+    assert long[1] - short[1] == pytest.approx(4.0 - DEFAULT_ROD_LENGTH)
+    layout = Layout()
+    fc = make_component(layout, "collimator", 2.5, 4.5)
+    fc.params["rods"] = {"length_in": 4.0}
+    fc.params["lens"] = {"focal_length_mm": 75.0, "distance_mm": 75.0}
+    result = analyze(layout)
+    build = result.units[fc.id].build
+    rods = [p for p in build.parts if p.part_id == "ER"]
+    assert len(rods) == 4
+    assert all(r.footprint().bounds[2] - r.footprint().bounds[0] == pytest.approx(4.0, abs=0.01) for r in rods)
+    assert result.trace.segments[0].length == pytest.approx(75.0 * MM)  # reachable with 4" rods
+    assert build.elements and not build.optic_visuals  # the lens acts, but sits hidden in the CP35
+
+
+def test_ignored_problems_stay_listed_but_are_not_illegal():
+    layout = Layout()
+    a = make_component(layout, "km-mirror", 6.0, 6.0)
+    b = make_component(layout, "km-mirror", 6.3, 6.1)
+    overlaps = [i for i in analyze(layout).issues if i.kind is IssueKind.OVERLAP]
+    keys = {i.key for i in overlaps}
+    assert {k.layer for k in keys} == {"base", "optic"}
+    assert all(k.components == tuple(sorted((a.id, b.id))) for k in keys)
+
+    layout.ignored = {IssueKey.of("overlap", [b.id, a.id], "optic")}  # id order does not matter
+    result = analyze(layout)
+    assert [i.layer for i in result.ignored_issues] == [Layer.OPTIC]
+    assert Layer.BASE in {i.layer for i in result.active_issues}
+    assert result.illegal_ids >= {a.id, b.id}  # the bases still collide
+
+    layout.ignored = {i.key for i in analyze(layout).issues}
+    result = analyze(layout)
+    assert result.active_issues == [] and result.illegal_ids == set()
+    assert len(result.ignored_issues) == len(result.issues) >= 2  # still found, just accepted
+    assert result.issues_for(a.id) == []
+
+
+def test_ignored_beam_warning_is_not_active():
+    layout = Layout()
+    bs, result, _ = _splitter_at_45(225.0, layout=layout)
+    (warning,) = [w for w in result.trace.warnings if w.kind is WarningKind.OWN_MOUNT]
+    assert warning.key == IssueKey("own-mount", (bs.id,))
+    assert result.active_keys_for(bs.id) == [warning.key]
+    layout.ignored = {warning.key}
+    result = analyze(layout)
+    assert result.ignored_warnings and not result.active_warnings
+    assert result.active_keys_for(bs.id) == []
