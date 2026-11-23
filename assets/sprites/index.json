@@ -1,6 +1,24 @@
 {
   "_comment": "Top-down part sprites rendered from the vendor CAD files in assets/cad, which are not committed. Regenerate with `python -m olayout.tools.bake_sprites`; the app also refreshes a sprite whenever its CAD file changes locally.",
   "sprites": {
+    "BE02R-49b872a799c8": {
+      "part": "BE02R",
+      "x0": -1.694803,
+      "y1": 1.025512,
+      "ppi": 200.0,
+      "z_top": 0.649606,
+      "source_sha1": "0dac68eb5e11dfb9b6d50622fac477b25a62a2e2",
+      "renderer": "render v3, mesh v1, 200 ppi, x2, margin 0.12\", material anodized"
+    },
+    "BE02R-b9295ee023b4": {
+      "part": "BE02R",
+      "x0": -1.694803,
+      "y1": 1.734173,
+      "ppi": 200.0,
+      "z_top": 0.984252,
+      "source_sha1": "0dac68eb5e11dfb9b6d50622fac477b25a62a2e2",
+      "renderer": "render v3, mesh v1, 200 ppi, x2, margin 0.12\", material anodized"
+    },
     "BE1-bf23d0c3853d": {
       "part": "BE1",
       "x0": -0.744619,
@@ -37,8 +55,35 @@
       "source_sha1": "83f4fd827996a69a021399165f7ed73d7b473fba",
       "renderer": "render v3, mesh v1, 200 ppi, x2, margin 0.12\", material anodized"
     },
+    "KB1X1-105af19e8fa4": {
+      "part": "KB1X1",
+      "x0": -0.620177,
+      "y1": 0.620155,
+      "ppi": 200.0,
+      "z_top": -0.869998,
+      "source_sha1": "9f8d90985157bda6a3f1d51f7c6b36213f51d5a6",
+      "renderer": "render v3, mesh v1, 200 ppi, x2, margin 0.12\", material anodized_light"
+    },
     "KB1X1-21878c4557e8": {
       "part": "KB1X1",
+      "x0": -0.620177,
+      "y1": 0.620155,
+      "ppi": 200.0,
+      "z_top": -1.049998,
+      "source_sha1": "9f8d90985157bda6a3f1d51f7c6b36213f51d5a6",
+      "renderer": "render v3, mesh v1, 200 ppi, x2, margin 0.12\", material anodized_light"
+    },
+    "KB1X1-BOTTOM-306b19b41428": {
+      "part": "KB1X1-BOTTOM",
+      "x0": -0.620177,
+      "y1": 0.620155,
+      "ppi": 200.0,
+      "z_top": -0.869998,
+      "source_sha1": "9f8d90985157bda6a3f1d51f7c6b36213f51d5a6",
+      "renderer": "render v3, mesh v1, 200 ppi, x2, margin 0.12\", material anodized_light"
+    },
+    "KB1X1-BOTTOM-ecfe39a69737": {
+      "part": "KB1X1-BOTTOM",
       "x0": -0.620177,
       "y1": 0.620155,
       "ppi": 200.0,

@@ -24,6 +24,9 @@ from dataclasses import dataclass
 from enum import Enum
 
 import numpy as np
+import shapely
+from shapely import affinity
+from shapely.geometry import Polygon, box
 
 from olayout.catalog.primitives import (
     Bore,
@@ -343,20 +346,40 @@ def make_fmp1() -> PartSpec:
     )
 
 
+KB1X1_PLATE = 0.24  # each of its two plates
+KB1X1_GAP = 0.02
+
+
+def _kb1x1_bottom_plate() -> Box:
+    top = -KB1X1_PLATE - KB1X1_GAP
+    return Box((-0.5, -0.5, top - KB1X1_PLATE), (0.5, 0.5, top), "anodized")
+
+
 def make_kb1x1() -> PartSpec:
     """1" x 1" magnetic kinematic base, 0.50" tall; origin at its top centre."""
-    plate, gap = 0.24, 0.02
     prims = (
-        Box((-0.5, -0.5, -plate), (0.5, 0.5, 0.0), "anodized_light"),
-        Box((-0.5, -0.5, -2 * plate - gap), (0.5, 0.5, -plate - gap), "anodized"),
+        Box((-0.5, -0.5, -KB1X1_PLATE), (0.5, 0.5, 0.0), "anodized_light"),
+        _kb1x1_bottom_plate(),
     )
     return PartSpec(
         id="KB1X1",
         name='KB1X1 magnetic kinematic base, 1" x 1"',
         layer=Layer.OPTIC,
         prims=prims,
-        taps=(MountingTap("bottom", "Bottom", (0.0, 0.0, -2 * plate - gap), (0, 0, -1)),),
+        taps=(MountingTap("bottom", "Bottom", (0.0, 0.0, -2 * KB1X1_PLATE - KB1X1_GAP), (0, 0, -1)),),
         description="Magnetic kinematic base: remove and replace a mount repeatably.",
+    )
+
+
+def make_kb1x1_bottom() -> PartSpec:
+    """The KB1X1's bottom plate alone: what stays on the post when the mount
+    is lifted off with the top plate.  Same frame as the KB1X1."""
+    return PartSpec(
+        id="KB1X1-BOTTOM",
+        name="KB1X1 bottom plate",
+        layer=Layer.OPTIC,
+        prims=(_kb1x1_bottom_plate(),),
+        description="The half of a KB1X1 that stays on the post.",
     )
 
 
@@ -447,6 +470,147 @@ def cage_rod_prims(length: float) -> tuple[Primitive, ...]:
 def make_cage_rod() -> PartSpec:
     """ER cage rod; units build their own length with :func:`cage_rod_prims`."""
     return PartSpec(id="ER", name="ER cage rod (Ø6 mm)", layer=Layer.OPTIC, prims=cage_rod_prims(1.5))
+
+
+# ==========================================================================
+# BE02R 2X reflective beam expander (drawing rev B + STEP)
+# ==========================================================================
+# A housing (base flange, side walls, lid) holding two fixed spherical
+# mirrors.  The beam enters through an SM05 port, meets a convex mirror
+# (R 51.5 mm), then a concave one (R 100 mm, f = 50 mm), and leaves through
+# a port in the 79° face.
+#
+# Part frame: origin where the input-port axis meets mirror 1, at beam
+# height; +x along the input beam; z up.  (No post: the origin is also the
+# unit origin.)  All numbers were measured from the STEP file, whose mirror
+# surfaces are exact spheres.
+BE02R_BOTTOM = -0.984  # the beam is 0.98" (25.0 mm) above the base
+BE02R_FLANGE_TOP = -0.748
+BE02R_WALL_TOP = 0.551
+BE02R_LID_TOP = 0.650
+BE02R_FLANGE = (
+    (-1.535, 0.787), (0.558, 0.787), (0.588, 0.772), (1.003, -1.300), (0.990, -1.337),
+    (-0.380, -1.613), (-1.535, -1.613), (-1.565, -1.599), (-1.574, -1.575), (-1.572, 0.759), (-1.557, 0.780),
+)
+BE02R_OUTLINE = (  # walls and lid; the edge from (0.465, 0.602) to (0.818, -1.181) is the 79° output face
+    (-1.378, 0.629), (0.436, 0.628), (0.465, 0.602), (0.818, -1.181), (0.810, -1.213), (0.788, -1.226),
+    (-0.371, -1.456), (-1.378, -1.456), (-1.402, -1.447), (-1.417, -1.417), (-1.417, 0.591), (-1.408, 0.615),
+)
+BE02R_CAVITY = (
+    (-0.828, 0.508), (-0.899, 0.493), (-0.966, 0.465), (-1.063, 0.394), (-1.135, 0.296), (-1.174, 0.181),
+    (-1.180, 0.110), (-1.180, -0.961), (-1.154, -1.079), (-1.109, -1.165), (-1.063, -1.220), (-1.007, -1.267),
+    (-0.944, -1.302), (-0.875, -1.326), (-0.780, -1.338), (-0.423, -1.338), (-0.346, -1.330), (0.202, -1.221),
+    (0.273, -1.195), (0.337, -1.156), (0.410, -1.088), (0.463, -1.003), (0.494, -0.908), (0.500, -0.814),
+    (0.307, 0.188), (0.285, 0.260), (0.236, 0.347), (0.187, 0.403), (0.127, 0.449), (0.060, 0.483), (-0.037, 0.508),
+)
+BE02R_PORT_RADIUS = 0.256  # SM05 bores (Ø13 mm)
+BE02R_OUTPUT_PORT = ((0.512, -0.374), 11.24)  # a point on its axis and its direction (square to the 79° face)
+BE02R_SIDE_PLATE = ((-1.023, 0.631), (0.235, 0.902), -0.748, 0.472)  # 8-32 mounting plate: x/y corners, z range
+
+
+@dataclass(frozen=True)
+class FixedMirror:
+    """A mirror built into a part, where the part's axial beam hits it (part frame)."""
+
+    center: tuple[float, float]  # the axial beam's hit point
+    normal_angle: float  # front-surface normal, degrees
+    roc: float  # radius of curvature, inches: + concave, - convex
+    aperture: tuple[float, float]  # extent along the tangent (normal turned +90°), relative to `center`
+    thickness: float  # substrate behind the surface
+
+
+def mirrors_along_axis(spheres, apertures, thicknesses) -> tuple[tuple[FixedMirror, ...], float]:
+    """Follow the +x axis through the origin across spherical mirrors.
+
+    ``spheres`` are ``((cx, cy), roc)`` in the part frame (roc < 0: convex).
+    Returns the mirrors, located where the axis hits them, and the direction
+    (degrees) of the beam that leaves the last one.
+    """
+    origin, direction = np.array([-10.0, 0.0]), np.array([1.0, 0.0])
+    mirrors = []
+    for ((cx, cy), roc), aperture, thickness in zip(spheres, apertures, thicknesses):
+        centre, radius = np.array([cx, cy]), abs(roc)
+        to_origin = origin - centre
+        b = to_origin @ direction
+        root = math.sqrt(b * b - (to_origin @ to_origin - radius * radius))
+        # A convex mirror is hit on the near side of its sphere, a concave one from inside.
+        hit = origin + (-b - root if roc < 0 else -b + root) * direction
+        normal = (hit - centre) / radius if roc < 0 else (centre - hit) / radius  # facing the beam
+        mirrors.append(
+            FixedMirror(
+                center=(float(hit[0]), float(hit[1])),
+                normal_angle=math.degrees(math.atan2(normal[1], normal[0])),
+                roc=roc,
+                aperture=aperture,
+                thickness=thickness,
+            )
+        )
+        origin, direction = hit, direction - 2 * (direction @ normal) * normal
+    return tuple(mirrors), math.degrees(math.atan2(direction[1], direction[0]))
+
+
+_IN = 1 / 25.4
+BE02R_MIRRORS, BE02R_EXIT_ANGLE = mirrors_along_axis(
+    # The STEP's sphere centres (part frame, mm) and radii; the input axis meets mirror 1 at the origin.
+    spheres=(
+        ((47.866543 * _IN, 19.001159 * _IN), -51.5 * _IN),
+        ((71.606675 * _IN, 27.620975 * _IN), 100.0 * _IN),
+    ),
+    apertures=((-0.2045, 0.0880), (-0.2660, 0.3808)),  # the mirror surfaces, measured on the STEP
+    thicknesses=(0.092, 0.201),
+)
+
+
+def _be02r_walls(z0: float, z1: float, with_ports: bool) -> list[Primitive]:
+    """Side walls between ``z0`` and ``z1``; at beam height the SM05 ports cut through them."""
+    walls = Polygon(BE02R_OUTLINE, [BE02R_CAVITY])
+    if with_ports:
+        r = BE02R_PORT_RADIUS
+        (ox, oy), angle = BE02R_OUTPUT_PORT
+        output = affinity.rotate(box(-0.6, -r, 0.6, r), angle, origin=(0.0, 0.0))
+        ports = [box(-1.8, -r, -0.9, r), affinity.translate(output, ox, oy)]
+        walls = walls.difference(ports[0]).difference(ports[1])
+    prims: list[Primitive] = []
+    for piece in shapely.get_parts(walls):
+        outline = tuple((round(x, 4), round(y, 4)) for x, y in piece.exterior.coords[:-1])
+        holes = tuple(tuple((round(x, 4), round(y, 4)) for x, y in h.coords[:-1]) for h in piece.interiors)
+        prims.append(Prism(outline, z0, z1, "anodized", holes))
+    return prims
+
+
+def _be02r_substrate(mirror: FixedMirror, half_height: float) -> Prism:
+    """The glass behind a mirror surface, kept just behind its tangent line so
+    the curved edges never shadow the surface itself."""
+    angle = math.radians(mirror.normal_angle)
+    n = np.array([math.cos(angle), math.sin(angle)])
+    t = np.array([-n[1], n[0]])
+    c = np.asarray(mirror.center)
+    lo, hi = mirror.aperture
+    corners = [c + u * t + w * n for u, w in ((lo, -0.003), (hi, -0.003), (hi, -mirror.thickness), (lo, -mirror.thickness))]
+    return Prism(tuple((round(float(x), 4), round(float(y), 4)) for x, y in corners), -half_height, half_height, "steel")
+
+
+def make_be02r() -> PartSpec:
+    """Thorlabs BE02R 2X reflective beam expander, standing on its base flange."""
+    port = BE02R_PORT_RADIUS
+    (sx0, sy0), (sx1, sy1), sz0, sz1 = BE02R_SIDE_PLATE
+    prims: list[Primitive] = [
+        Prism(BE02R_FLANGE, BE02R_BOTTOM, BE02R_FLANGE_TOP, "anodized"),
+        *_be02r_walls(BE02R_FLANGE_TOP, -port, with_ports=False),
+        *_be02r_walls(-port, port, with_ports=True),
+        *_be02r_walls(port, BE02R_WALL_TOP, with_ports=False),
+        Prism(BE02R_OUTLINE, BE02R_WALL_TOP, BE02R_LID_TOP, "anodized"),
+        Box((sx0, sy0, sz0), (sx1, sy1, sz1), "anodized"),
+        _be02r_substrate(BE02R_MIRRORS[0], 0.146),
+        _be02r_substrate(BE02R_MIRRORS[1], 0.335),
+    ]
+    return PartSpec(
+        id="BE02R",
+        name="BE02R 2X reflective beam expander",
+        layer=Layer.OPTIC,
+        prims=tuple(prims),
+        description="Convex R 51.5 mm + concave R 100 mm mirrors in a housing with SM05 ports.",
+    )
 
 
 # ==========================================================================
@@ -577,10 +741,12 @@ def _build_registry() -> dict[str, PartSpec]:
         make_bp108(),
         make_fmp1(),
         make_kb1x1(),
+        make_kb1x1_bottom(),
         make_cp35(),
         make_sm1zb(),
         make_fiber_connector(),
         make_cage_rod(),
+        make_be02r(),
         make_ph2(),
         make_ph2(z_base=BE1_HEIGHT, part_id="PH2@BE1"),  # PH2 standing on a BE1
         make_be1(),

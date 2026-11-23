@@ -1,5 +1,5 @@
 {
-  "_comment": "Vendor CAD files used to render part sprites (see README.md). 'axes' gives the CAD axis for the part's x (out of the optic's front face), y (your right when facing the optic) and z (up); 'origin_mm' is the CAD point that becomes the part origin. Alignments were measured from each file's mounting holes and bores. 'material' (optional) replaces the file's colours with a renderer material, since Thorlabs STEP files are single-colour. The STEP files themselves are not committed.",
+  "_comment": "Vendor CAD files used to render part sprites (see README.md). 'axes' gives the CAD axis for the part's x (out of the optic's front face), y (your right when facing the optic) and z (up); 'origin_mm' is the CAD point that becomes the part origin. Alignments were measured from each file's mounting holes and bores. 'material' (optional) replaces the file's colours with a renderer material, since Thorlabs STEP files are single-colour. 'hide_above_mm' (optional) drops a lid above that part-frame height so the inside shows. The STEP files themselves are not committed.",
   "KM100": {
     "file": "KM100-E02-Step.step",
     "axes": ["z", "x", "y"],
@@ -33,6 +33,14 @@
     "origin_mm": [9.28, 22.79, 19.67],
     "material": "anodized_light"
   },
+  "KB1X1-BOTTOM": {
+    "_note": "the KB1X1's bottom plate alone (what stays on the post when the mount is lifted off): same file and frame, top plate hidden",
+    "file": "KB1X1-Step.step",
+    "axes": ["x", "-z", "y"],
+    "origin_mm": [9.28, 22.79, 19.67],
+    "hide_above_mm": -6.2,
+    "material": "anodized_light"
+  },
   "CP35": {
     "_note": "origin: optic axis on the front face",
     "file": "CP35-Step.step",
@@ -45,6 +53,14 @@
     "file": "SM1ZB-Step.step",
     "axes": ["-z", "-x", "y"],
     "origin_mm": [0.0, 0.0, 5.59],
+    "material": "anodized"
+  },
+  "BE02R": {
+    "_note": "origin: where the input-port axis meets mirror 1, at beam height; x along the input beam. The lid (above the walls, 14 mm over the beam) is hidden so the mirrors show",
+    "file": "BE02R-Step.step",
+    "axes": ["-z", "-x", "y"],
+    "origin_mm": [20.0, 25.0, -40.0],
+    "hide_above_mm": 14.0,
     "material": "anodized"
   },
   "PH2": {

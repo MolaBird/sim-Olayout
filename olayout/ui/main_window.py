@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from olayout import __version__, paths
-from olayout.catalog.units import Mounting, get_unit_type
+from olayout.catalog.units import UNIT_TYPES, Mounting, get_unit_type, has_kb1x1
 from olayout.core.breadboard import DEFAULT_PRESET, PRESETS, Breadboard
 from olayout.core.layout import FILE_SUFFIX, Component, Layout, LayoutFormatError
 from olayout.ui.canvas.tools import PlaceTool
@@ -62,6 +62,7 @@ SHORTCUTS_HELP = """
 <tr><td><b>R / Shift+R</b></td><td>rotate ±90°</td></tr>
 <tr><td><b>Q / E</b></td><td>rotate ±15° (with Shift ±1°)</td></tr>
 <tr><td><b>F</b></td><td>next mounting orientation (which tap sits on the post)</td></tr>
+<tr><td><b>K</b></td><td>lift a mount off its KB1X1 magnetic base, or put it back</td></tr>
 <tr><td><b>Arrows</b></td><td>nudge: 1 hole / 1/8" (Shift 1/32", Ctrl 1")</td></tr>
 <tr><td><b>Ctrl+D, Ctrl+C/V/X, Del</b></td><td>duplicate, clipboard, delete</td></tr>
 <tr><td><b>B / G / L / S</b></td><td>beams · ghost optics (see bases) · labels · snapping</td></tr>
@@ -173,6 +174,12 @@ class MainWindow(QMainWindow):
         self.act_rot1 = a("Rotate +1°", lambda: self.rotate(1), "Shift+Q")
         self.act_rotm1 = a("Rotate −1°", lambda: self.rotate(-1), "Shift+E")
         self.act_orient = a("Next Mounting &Orientation", self.cycle_orientation, "F", "flip")
+        self.act_lift = a(
+            "Lift Off / Put &Back (KB1X1)",
+            lambda: self.doc.toggle_lifted_off(self.doc.selection),
+            "K",
+            tip="Take a mount off its KB1X1 magnetic base (it stops interacting with beams), or put it back",
+        )
         for key, dx, dy in (("Left", -1, 0), ("Right", 1, 0), ("Up", 0, 1), ("Down", 0, -1)):
             a(f"Nudge {key}", lambda dx=dx, dy=dy: self.nudge(dx, dy, "normal"), key)
             a(f"Nudge {key} (fine)", lambda dx=dx, dy=dy: self.nudge(dx, dy, "fine"), f"Shift+{key}")
@@ -229,7 +236,7 @@ class MainWindow(QMainWindow):
         edit.addSeparator()
         edit.addActions([self.act_cut, self.act_copy, self.act_paste, self.act_duplicate, self.act_delete, self.act_select_all])
         edit.addSeparator()
-        edit.addActions([self.act_rot90, self.act_rotm90, self.act_rot15, self.act_rotm15, self.act_rot1, self.act_rotm1, self.act_orient])
+        edit.addActions([self.act_rot90, self.act_rotm90, self.act_rot15, self.act_rotm15, self.act_rot1, self.act_rotm1, self.act_orient, self.act_lift])
 
         view = bar.addMenu("&View")
         view.addActions([self.act_zoom_in, self.act_zoom_out, self.act_fit])
@@ -415,9 +422,15 @@ class MainWindow(QMainWindow):
         self.view.setFocus()
 
     def _context_menu(self, global_pos, comp_id) -> None:
+        self._build_context_menu(comp_id).exec(global_pos)
+
+    def _build_context_menu(self, comp_id) -> QMenu:
         menu = QMenu(self)
         if comp_id is not None:
             menu.addActions([self.act_rot90, self.act_rotm90, self.act_rot15, self.act_rotm15, self.act_orient])
+            comp = self.doc.layout.component(comp_id)
+            if comp is not None and comp.type in UNIT_TYPES and has_kb1x1(UNIT_TYPES[comp.type]):
+                menu.addAction(self.act_lift)
             menu.addSeparator()
             menu.addActions([self.act_duplicate, self.act_copy, self.act_cut, self.act_delete])
             self._add_ignore_actions(menu, comp_id)
@@ -425,7 +438,7 @@ class MainWindow(QMainWindow):
             menu.addActions([self.act_paste, self.act_source, self.act_select_all])
             menu.addSeparator()
             menu.addActions([self.act_fit, self.act_ghost])
-        menu.exec(global_pos)
+        return menu
 
     def _add_ignore_actions(self, menu: QMenu, comp_id: str) -> None:
         """Accept (or stop accepting) the problems of the component under the cursor."""

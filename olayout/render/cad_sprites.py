@@ -86,6 +86,8 @@ def sprite_key(source: cad.CadSource, roll: np.ndarray, z_offset: float) -> str:
             ",".join(f"{round(v, 6) + 0.0:.6f}" for v in numbers),
         ]
     )
+    if source.hide_above_mm is not None:  # appended only when set, so older keys stay valid
+        text += f"|lid {source.hide_above_mm}"
     safe_id = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in source.part_id)
     return f"{safe_id}-{hashlib.sha1(text.encode()).hexdigest()[:12]}"
 
@@ -99,9 +101,17 @@ def renderer_stamp(source: cad.CadSource, ppi: float) -> str:
 
 
 def render_cad_sprite(source: cad.CadSource, roll: np.ndarray, z_offset: float, ppi: float = DEFAULT_PPI) -> Sprite:
-    """Render a CAD part mounted with ``roll`` (3x3) and raised by ``z_offset``."""
+    """Render a CAD part mounted with ``roll`` (3x3) and raised by ``z_offset``.
+
+    A part with a hidden lid (``hide_above_mm``) is drawn open while the lid
+    is on top; mounted upside down, it shows its real underside.
+    """
     vertices, faces, colors = cad.part_mesh(source)
-    vertices = vertices @ np.asarray(roll, dtype=float).T  # a new array: the cached mesh stays intact
+    roll = np.asarray(roll, dtype=float)
+    if source.hide_above_mm is not None and roll[2, 2] > 0:
+        keep = ~cad.lid_faces(vertices, faces, source.hide_above_mm / 25.4)
+        faces, colors = faces[keep], colors[keep]
+    vertices = vertices @ roll.T  # a new array: the cached mesh stays intact
     vertices[:, 2] += z_offset
     if source.material is not None:
         return render_mesh_sprite(vertices, faces, None, ppi, material=source.material)

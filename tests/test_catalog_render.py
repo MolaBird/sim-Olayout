@@ -28,10 +28,11 @@ def test_unit_builds_with_defaults(type_id):
         comp = Component("c1", type_id, orientation=orientation, params=new_component_params(type_id))
         fork = default_fork() if unit.mounting is Mounting.PEDESTAL else None
         placed = BuildCache().place(comp, fork)
-        if unit.mounting is Mounting.FREE:
-            assert placed.is_virtual and placed.build.emitters
+        if placed.is_virtual:  # a beam source: no mechanical parts
+            assert unit.mounting is Mounting.FREE and placed.build.emitters
             continue
-        assert placed.footprints[Layer.BASE].area > 0
+        if unit.mounting is not Mounting.FREE:  # held by a post holder or pedestal
+            assert placed.footprints[Layer.BASE].area > 0
         if type_id != "base":
             assert placed.footprints[Layer.OPTIC].area > 0
             assert placed.build.elements

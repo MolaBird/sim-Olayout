@@ -11,10 +11,11 @@ optic's front face points (for sources: the beam direction).
 
 from __future__ import annotations
 
+import hashlib
 import math
 from dataclasses import dataclass
 from enum import Enum
-from functools import cached_property
+from functools import cached_property, partial
 from typing import Any, Callable
 
 import numpy as np
@@ -27,6 +28,7 @@ from olayout.catalog.primitives import (
     Primitive,
     bounds3d,
     footprint,
+    rotation_matrix,
     slice_at,
     transform_all,
 )
@@ -150,6 +152,8 @@ class UnitBuild:
     blockers: tuple[Blocker, ...] = ()
     optic_visuals: tuple[OpticVisual, ...] = ()
     notes: tuple[str, ...] = ()
+    # Lifted off (a mount taken off its KB1X1): drawn faintly, but no optics or collisions.
+    detached_parts: tuple[PlacedPart, ...] = ()
 
     @cached_property
     def _footprints(self) -> dict[Layer, object]:
@@ -369,7 +373,9 @@ def _placed(part_id: str, pose: Pose = Pose(), roll: np.ndarray | None = None, z
     if roll is not None or z_offset:
         rot = np.eye(3) if roll is None else roll
         prims = transform_all(prims, rot, (0.0, 0.0, z_offset))
-    name = part_id if roll is None and not z_offset else f"{part_id}-r{hash((prims,)) & 0xFFFF:04x}"
+    # A stable name across runs (hash() of strings is randomised per process).
+    variant = hashlib.sha1(repr(prims).encode()).hexdigest()[:6]
+    name = part_id if roll is None and not z_offset else f"{part_id}-r{variant}"
     return PlacedPart(
         part_id, part.layer, prims, pose, name, roll=None if roll is None else _as_tuple(roll), z_offset=z_offset
     )
@@ -435,20 +441,50 @@ def _beam_blockers(placed: list[PlacedPart]) -> list[Blocker]:
 # ==========================================================================
 # Builders
 # ==========================================================================
+# A mount on a KB1X1 magnetic base can be lifted off (with the base's top
+# plate) and put back repeatably; while it is off it does nothing optically.
+KB1X1_SEATED = ParamField(
+    "kb1x1.seated",
+    "On its KB1X1",
+    "bool",
+    True,
+    tooltip="Untick (or press K) to lift the mount off its KB1X1 magnetic base: it stops "
+    "reflecting, blocking and colliding until you put it back.",
+)
+
+
+def has_kb1x1(unit: UnitType) -> bool:
+    return any(f.key == KB1X1_SEATED.key for f in unit.fields)
+
+
+def lifted_off(comp: Component) -> bool:
+    """Whether a KB1X1-mounted unit's mount is currently off its base."""
+    return not bool(get_param(comp.params, KB1X1_SEATED.key, True))
+
+
 def build_post_mounted_optic(
     unit: UnitType, comp: Component, *, mount_id: str, adapter_id: str | None, default_kind: OpticKind
 ) -> UnitBuild:
     pedestal = unit.mounting is Mounting.PEDESTAL
     parts: list[PlacedPart] = _pedestal_parts() if pedestal else _post_holder_parts(False)
     mount, mount_pose = _mount_on_post(mount_id, comp.orientation or None)
+    carried = [mount]  # what sits on the adapter (and comes off with a KB1X1's top plate)
+    if mount_id in PELLICLE_MOUNTS and _optic_kind(comp.params, default_kind) is not OpticKind.NONE:
+        # The pellicle's own frame sits on the mount's front face.
+        carried.append(_placed("BP108", mount_pose.compose(Pose(P.PELLICLE_PLANE_X, 0.0, 0.0))))
     if adapter_id:
         # Adapter (e.g. KB1X1) sits on the post directly under the mount's tap.
         mount_tap_z = get_part(mount_id).oriented(comp.orientation or None).tap_z
+        if adapter_id == "KB1X1" and lifted_off(comp):
+            parts.append(_placed("KB1X1-BOTTOM", Pose(), z_offset=mount_tap_z))
+            return UnitBuild(
+                parts=tuple(parts),
+                blockers=tuple(_beam_blockers(parts)),
+                notes=("Lifted off its KB1X1: no optics or collisions until it is put back (K)",),
+                detached_parts=tuple(carried),
+            )
         parts.append(_placed(adapter_id, Pose(), z_offset=mount_tap_z))
-    parts.append(mount)
-    if mount_id in PELLICLE_MOUNTS and _optic_kind(comp.params, default_kind) is not OpticKind.NONE:
-        # The pellicle's own frame sits on the mount's front face.
-        parts.append(_placed("BP108", mount_pose.compose(Pose(P.PELLICLE_PLANE_X, 0.0, 0.0))))
+    parts += carried
     elements, substrate, visuals = _optic_elements(
         get_part(mount_id), mount_pose, comp.params, default_kind, comp.label
     )
@@ -465,6 +501,52 @@ def build_base(unit: UnitType, comp: Component) -> UnitBuild:
     return UnitBuild(parts=tuple(_pedestal_parts()))
 
 
+def build_beam_expander(unit: UnitType, comp: Component, *, mirrored: bool) -> UnitBuild:
+    """BE02R: the beam travels along +x and meets mirror 1 at the unit origin.
+
+    The mirrored version is the same expander upside down, so its beam path
+    folds the other way (y -> -y).
+    """
+    flip = -1.0 if mirrored else 1.0
+    parts = [_placed("BE02R", Pose(), roll=rotation_matrix("x", 180) if mirrored else None)]
+    elements, visuals = [], []
+    for index, mirror in enumerate(P.BE02R_MIRRORS, start=1):
+        x, y = mirror.center
+        angle = mirror.normal_angle * flip
+        lo, hi = mirror.aperture
+        offset = (lo + hi) / 2 * flip  # mirroring reverses the tangent
+        elements.append(
+            OpticalElement(
+                kind=OpticKind.MIRROR,
+                center=(x, y * flip),
+                normal_angle=angle,
+                half_aperture=(hi - lo) / 2,
+                aperture_offset=offset,
+                roc=mirror.roc,
+                name=f"{comp.label} mirror {index}".strip(),
+            )
+        )
+        tangent = math.radians(angle + 90.0)
+        centre = Pose(x + offset * math.cos(tangent), y * flip + offset * math.sin(tangent), angle)
+        visuals.append(OpticVisual(OpticKind.MIRROR, centre, hi - lo, mirror.thickness, 1 if mirror.roc > 0 else -1))
+    side = "right" if mirrored else "left"
+    first, second = P.BE02R_MIRRORS
+    edge = min(-first.aperture[0], first.aperture[1])  # mirror 1's edge nearest the beam axis
+    notes = (
+        f"2X: convex R {-first.roc / MM:.1f} mm, then concave R {second.roc / MM:.0f} mm",
+        f"The beam leaves {P.BE02R_EXIT_ANGLE:.1f}° to the {side} of its input direction",
+        # A Gaussian loses 1% past an edge 1.645 w / √2 from its centre.
+        f"Mirror 1's edge is {edge / MM:.1f} mm from the axis: beams over ~Ø{2 * math.sqrt(2) * edge / 1.645 / MM:.1f} mm clip",
+    )
+    return UnitBuild(
+        parts=tuple(parts),
+        elements=tuple(elements),
+        blockers=tuple(_beam_blockers(parts)),
+        optic_visuals=tuple(visuals),
+        notes=notes,
+    )
+
+
 # Collimator = SM1ZB (fiber input, hanging inverted from its PH2) + four ER cage
 # rods (length is a parameter; ER1.5 by default) + CP35 cage plate holding the
 # lens.  Both plates clamp the rods with setscrews, so the CP35 slides along
@@ -474,19 +556,28 @@ DEFAULT_ROD_LENGTH = 1.5  # ER1.5
 ROD_LENGTH_RANGE = (0.5, 24.0)
 
 
+COLLIMATOR_MIN_DISTANCE = 5.0 * MM  # short-focus lenses sit recessed behind the CP35, in a lens tube
+
+
+def _cp35_nearest(flipped: bool) -> float:
+    """Closest position of the CP35's mid-plane (SM1ZB frame x): it must clear
+    the carriage, or the 0.80"-deep housing when that faces the lens."""
+    lens_side_obstacle = -P.SM1ZB_HOUSING_BACK if flipped else P.SM1ZB_CARRIAGE_X
+    return lens_side_obstacle + P.CP35_THICKNESS / 2
+
+
 def collimator_lens_range(orientation: str | None, rod_length: float = DEFAULT_ROD_LENGTH) -> tuple[float, float]:
     """Feasible fiber -> lens distances (inches) for a rod length.
 
-    With the housing toward the lens the CP35 must clear the 0.80"-deep
-    housing, so the range shifts to longer focal lengths.
+    The far end is where the CP35 still holds the rods.  The near end is
+    5 mm in either orientation: a lens closer than the CP35 itself can get
+    sits recessed toward the fiber, in a lens tube.
     """
     flipped = get_part("SM1ZB").tap(orientation).yaw == 180
     tip_x = -P.SM1ZB_FIBER_X if flipped else P.SM1ZB_FIBER_X
-    lens_side_obstacle = -P.SM1ZB_HOUSING_BACK if flipped else P.SM1ZB_CARRIAGE_X
-    half_plate = P.CP35_THICKNESS / 2
-    lens_min = lens_side_obstacle + half_plate
-    lens_max = P.SM1ZB_PLATE_HALF_T - ROD_MIN_ENGAGEMENT + rod_length - half_plate
-    return lens_min - tip_x, max(lens_max, lens_min) - tip_x
+    lens_max = P.SM1ZB_PLATE_HALF_T - ROD_MIN_ENGAGEMENT + rod_length - P.CP35_THICKNESS / 2
+    far = max(lens_max, _cp35_nearest(flipped)) - tip_x
+    return COLLIMATOR_MIN_DISTANCE, max(far, COLLIMATOR_MIN_DISTANCE)
 
 
 def build_collimator(unit: UnitType, comp: Component) -> UnitBuild:
@@ -506,8 +597,9 @@ def build_collimator(unit: UnitType, comp: Component) -> UnitBuild:
     # The fiber connector always sticks out of the plate face on the fiber side.
     parts.append(_placed("FIBER", frame.compose(Pose(-P.SM1ZB_PLATE_HALF_T, 0.0, 0.0))))
 
-    lens_x = tip_x + distance  # lens mid-plane, centred in the CP35
-    cp35_front = lens_x + P.CP35_THICKNESS / 2
+    lens_x = tip_x + distance  # lens mid-plane
+    cp35_x = max(lens_x, _cp35_nearest(tap.yaw == 180))  # the CP35 centres on the lens when it can
+    cp35_front = cp35_x + P.CP35_THICKNESS / 2
     roll = P.roll_bringing_down(tap.normal)  # CP35 is symmetric end-for-end: roll only
     cp35_pose = frame.compose(Pose(cp35_front, 0.0, 0.0))
     parts.append(_placed("CP35", cp35_pose, roll=roll))
@@ -519,8 +611,9 @@ def build_collimator(unit: UnitType, comp: Component) -> UnitBuild:
             parts.append(_cage_rod(rod_length, frame.compose(Pose(rod_center, y, 0.0)), z))
 
     lens_params = {"optic": {"kind": "lens", "focal_length_mm": f_mm}}
-    # The lens sits inside the cage plate: it acts on the beam but is not drawn.
-    elements, _, _ = _optic_elements(get_part("CP35"), cp35_pose, lens_params, OpticKind.LENS, comp.label)
+    # The lens sits inside the cage plate (or recessed behind it): it acts on the beam but is not drawn.
+    lens_pose = frame.compose(Pose(cp35_front + lens_x - cp35_x, 0.0, 0.0))
+    elements, _, _ = _optic_elements(get_part("CP35"), lens_pose, lens_params, OpticKind.LENS, comp.label)
     tip = frame.compose(Pose(tip_x, 0.0, 0.0))
     emitters: tuple[Emitter, ...] = ()
     if bool(get_param(params, "source.enabled", True)):
@@ -538,9 +631,11 @@ def build_collimator(unit: UnitType, comp: Component) -> UnitBuild:
             ),
         )
     notes = [
-        f"Fiber → lens: {distance / MM:.1f} mm ({distance:.3f}\")",
+        f"Fiber → lens: {distance / MM:.2f} mm ({distance:.3f}\")",
         f"{rod_length:g}\" rods allow {d_min / MM:.1f}–{d_max / MM:.1f} mm in this orientation",
     ]
+    if cp35_x - lens_x > 1e-6:
+        notes.append(f"Lens recessed {(cp35_x - lens_x) / MM:.1f} mm behind the CP35's centre (lens tube)")
     if abs(wanted - distance) > 1e-6:
         notes.append(f"Requested {wanted / MM:.1f} mm is out of reach; clamped")
     notes = tuple(notes)
@@ -604,6 +699,8 @@ def _mount_unit(
         fields = list(optic_param_fields)
     else:
         fields = list(optic_fields(default_kind, kinds, with_thickness=mount_id not in PELLICLE_MOUNTS))
+    if adapter_id == "KB1X1":
+        fields.insert(0, KB1X1_SEATED)
     if optic_defaults:
         fields = [
             ParamField(**{**f.__dict__, "default": optic_defaults[f.key]}) if f.key in optic_defaults else f
@@ -703,10 +800,37 @@ def _build_registry() -> dict[str, UnitType]:
             default_kind=OpticKind.MIRROR,
         ),
         _mount_unit(
+            "kb-mirror",
+            "Fixed mirror, magnetic base",
+            category="Mirrors",
+            description="FMP1 fixed mount on a KB1X1 magnetic base, on a pedestal base (PH2 + BE1 + CF125C). "
+            "Lift it off and put it back with K.",
+            mounting=Mounting.PEDESTAL,
+            prefix="M",
+            mount_id="FMP1",
+            adapter_id="KB1X1",
+            bom=("FMP1", "KB1X1", *BASE_BOM),
+            default_kind=OpticKind.MIRROR,
+        ),
+        _mount_unit(
+            "kb-h-mirror",
+            "Fixed mirror, magnetic base, hole-mounted",
+            category="Mirrors",
+            description="FMP1 fixed mount on a KB1X1 magnetic base, on a PH2 screwed into a hole. "
+            "Lift it off and put it back with K.",
+            mounting=Mounting.HOLE,
+            prefix="M",
+            mount_id="FMP1",
+            adapter_id="KB1X1",
+            bom=("FMP1", "KB1X1", "PH2", 'TR-series Ø1/2" post'),
+            default_kind=OpticKind.MIRROR,
+        ),
+        _mount_unit(
             "mag-km-pellicle",
             "Pellicle beamsplitter (BP108)",
             category="Beamsplitters",
-            description="BP108 8:92 pellicle in a KM100BP kinematic mount, on a KB1X1 magnetic base and pedestal base.",
+            description="BP108 8:92 pellicle in a KM100BP kinematic mount, on a KB1X1 magnetic base and pedestal base. "
+            "Lift it off and put it back with K.",
             mounting=Mounting.PEDESTAL,
             prefix="BS",
             mount_id="KM100BP",
@@ -759,12 +883,12 @@ def _build_registry() -> dict[str, UnitType]:
                     "float",
                     25.4,
                     unit="mm",
-                    minimum=1.0,
+                    minimum=COLLIMATOR_MIN_DISTANCE / MM,
                     maximum=2000,
                     step=0.1,
                     decimals=2,
-                    tooltip="Equal to the focal length for a collimated beam. The CP35 slides along the "
-                    "cage rods, which limits the range (see the notes below).",
+                    tooltip="Equal to the focal length for a collimated beam. 5 mm at least; the CP35 "
+                    "slides along the cage rods, which limits the far end (see the notes below).",
                 ),
                 ParamField(
                     "rods.length_in",
@@ -809,6 +933,23 @@ def _build_registry() -> dict[str, UnitType]:
                 ParamField("power_mw", "Power", "float", 1.0, unit="mW", minimum=0, maximum=1e6, step=0.1, decimals=3),
             ),
         ),
+        *(
+            UnitType(
+                id="beam-expander-mirrored" if mirrored else "beam-expander",
+                name="Beam expander 2X, mirrored" if mirrored else "Beam expander 2X",
+                category="Beam expanders",
+                description=(
+                    "Thorlabs BE02R reflective beam expander"
+                    + (" mounted upside down, so its beam path folds the other way" if mirrored else "")
+                    + ". The input beam meets mirror 1 at the component's position; angle = input beam direction."
+                ),
+                mounting=Mounting.FREE,
+                label_prefix="BX",
+                bill_of_materials=("BE02R",),
+                builder=partial(build_beam_expander, mirrored=mirrored),
+            )
+            for mirrored in (False, True)
+        ),
         UnitType(
             id="base",
             name="Pedestal base",
@@ -830,7 +971,7 @@ def _build_registry() -> dict[str, UnitType]:
 
 
 UNIT_TYPES: dict[str, UnitType] = _build_registry()
-CATEGORY_ORDER = ("Sources", "Mirrors", "Beamsplitters", "Lenses", "Bases")
+CATEGORY_ORDER = ("Sources", "Mirrors", "Beamsplitters", "Lenses", "Beam expanders", "Bases")
 
 
 def get_unit_type(type_id: str) -> UnitType:
@@ -846,14 +987,22 @@ def new_component_params(type_id: str) -> dict:
 
 def catalog_parts() -> list[PlacedPart]:
     """Every distinct part orientation the catalog produces: each unit in each
-    orientation with default parameters, plus the pedestal clamping fork."""
+    orientation, with default parameters and with each on/off option flipped
+    (e.g. a mount lifted off its KB1X1), plus the pedestal clamping fork."""
     seen: dict[tuple, PlacedPart] = {}
     for unit in UNIT_TYPES.values():
+        variants = [unit.default_params()]
+        for f in unit.fields:
+            if f.kind == "bool":
+                params = unit.default_params()
+                set_param(params, f.key, not f.default)
+                variants.append(params)
         for orientation in [name for name, _ in unit.orientations()] or [""]:
-            comp = Component("catalog", unit.id, orientation=orientation, params=unit.default_params())
-            parts = unit.build(comp).parts
-            if unit.mounting is Mounting.PEDESTAL:
-                parts += fork_parts(default_fork())
-            for part in parts:
-                seen.setdefault((part.part_id, part.prims, part.roll, part.z_offset), part)
+            for params in variants:
+                build = unit.build(Component("catalog", unit.id, orientation=orientation, params=params))
+                parts = build.parts + build.detached_parts
+                if unit.mounting is Mounting.PEDESTAL:
+                    parts += fork_parts(default_fork())
+                for part in parts:
+                    seen.setdefault((part.part_id, part.prims, part.roll, part.z_offset), part)
     return list(seen.values())

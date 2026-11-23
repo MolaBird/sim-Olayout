@@ -50,6 +50,7 @@ Z_SELECTION = 50
 Z_GHOST = 55
 Z_OVERLAY = 60
 Z_LABEL = 70
+DETACHED_OPACITY = 0.3  # parts lifted off a unit (e.g. off a KB1X1) are only hinted at
 
 
 def to_scene(x: float, y: float) -> QPointF:
@@ -88,6 +89,7 @@ class ComponentLayerItem(QGraphicsItem):
         self.setZValue((Z_GHOST if ghost else 0) + (Z_BASE if layer is Layer.BASE else Z_OPTIC))
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
         self._parts = []
+        self._detached = []  # lifted off: drawn faintly, not part of the footprint
         self._visuals = []
         self._shape = QPainterPath()
         self._bounds = QRectF()
@@ -104,10 +106,12 @@ class ComponentLayerItem(QGraphicsItem):
     # ---------------------------------------------------------- geometry
     def set_geometry(self, placed: PlacedUnit, source_color: QColor | None = None) -> None:
         parts = [p for p in placed.parts if p.layer is self.layer]
+        detached = [p for p in placed.build.detached_parts if p.layer is self.layer]
         visuals = list(placed.build.optic_visuals) if self.layer is Layer.OPTIC else []
         is_source = self.layer is Layer.OPTIC and placed.is_virtual
         self.prepareGeometryChange()
         self._parts = parts
+        self._detached = detached
         self._visuals = visuals
         self._source_color = (source_color or QColor("#ff5a5a")) if is_source else None
         self._source_enabled = bool(placed.build.emitters)
@@ -119,14 +123,14 @@ class ComponentLayerItem(QGraphicsItem):
             bounds = source_icon_rect()
         else:
             self._shape = polygon_path(local)
-            bounds = parts_bounds(parts) if parts else QRectF()
+            bounds = parts_bounds(parts + detached) if parts or detached else QRectF()
             bounds = bounds.united(self._shape.boundingRect()) if not bounds.isNull() else self._shape.boundingRect()
         margin = 0.35  # shadows and outlines
         self._bounds = bounds.adjusted(-margin, -margin, margin, margin)
         self.update()
 
     def has_content(self) -> bool:
-        return bool(self._parts) or self._source_color is not None
+        return bool(self._parts or self._detached) or self._source_color is not None
 
     def set_pose(self, x: float, y: float, angle: float) -> None:
         self.setPos(x, -y)
@@ -151,6 +155,11 @@ class ComponentLayerItem(QGraphicsItem):
         shadow = QTransform().rotate(-self.rotation()).map(QPointF(SHADOW_PER_INCH, SHADOW_PER_INCH))
         if self._parts:
             paint_parts(painter, self._parts, shadow, LAYER_HEIGHT[self.layer])
+        if self._detached:
+            painter.save()
+            painter.setOpacity(painter.opacity() * DETACHED_OPACITY)
+            paint_parts(painter, self._detached, None, LAYER_HEIGHT[self.layer])
+            painter.restore()
         for visual in self._visuals:
             paint_optic(painter, visual)
         if self._source_color is not None:

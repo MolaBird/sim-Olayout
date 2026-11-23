@@ -321,7 +321,7 @@ class BeamTracer:
         n = element.normal
         tan = element.tangent
         offset = float(np.dot(hit - np.asarray(element.center), tan))
-        clip = aperture_transmission(state.tangential.radius, element.half_aperture, offset)
+        clip = aperture_transmission(state.tangential.radius, element.half_aperture, offset - element.aperture_offset)
         state = state.scaled(clip)
         cos_i = abs(float(np.dot(d, n)))
         incidence = math.degrees(math.acos(min(cos_i, 1.0)))

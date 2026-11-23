@@ -14,7 +14,16 @@ from typing import Callable, Iterable
 from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtGui import QUndoCommand, QUndoStack
 
-from olayout.catalog.units import Mounting, get_unit_type, new_component_params, set_param
+from olayout.catalog.units import (
+    KB1X1_SEATED,
+    UNIT_TYPES,
+    Mounting,
+    get_unit_type,
+    has_kb1x1,
+    lifted_off,
+    new_component_params,
+    set_param,
+)
 from olayout.core.breadboard import Breadboard
 from olayout.core.layout import Component, IssueKey, Layout, Measurement, Probe
 from olayout.core.units import normalize_angle
@@ -304,6 +313,27 @@ class LayoutDocument(QObject):
                     comp.orientation = value
 
         self.apply("Change mounting orientation", mutate, changed=set(changes))
+
+    def toggle_lifted_off(self, ids: Iterable[str]) -> None:
+        """Lift KB1X1-mounted optics off their bases, or put them back (one undo step).
+
+        With any of them on its base, all come off; otherwise all go back.
+        """
+        comps = [
+            c for cid in ids
+            if (c := self.layout.component(cid)) is not None and c.type in UNIT_TYPES and has_kb1x1(UNIT_TYPES[c.type])
+        ]
+        if not comps:
+            return
+        take_off = any(not lifted_off(c) for c in comps)
+        ids = {c.id for c in comps}
+
+        def mutate(layout: Layout) -> None:
+            for comp in layout.components:
+                if comp.id in ids:
+                    set_param(comp.params, KB1X1_SEATED.key, not take_off)
+
+        self.apply("Lift off KB1X1" if take_off else "Put back on KB1X1", mutate, changed=ids)
 
     # ----------------------------------------------------- annotation edits
     def add_measurement(self, a: tuple[float, float], b: tuple[float, float]) -> None:

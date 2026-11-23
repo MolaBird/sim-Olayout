@@ -48,6 +48,7 @@ class CadSource:
     axes: tuple[str, str, str]
     origin_mm: tuple[float, float, float]
     hide_below_mm: float | None = None  # optional: drop geometry below this part-frame z (mm)
+    hide_above_mm: float | None = None  # optional: a lid above this part-frame z (mm), hidden to show the inside
     material: str | None = None  # optional renderer material instead of the file's colours
 
     def rotation(self) -> np.ndarray:
@@ -143,6 +144,7 @@ def load_registry() -> dict[str, CadSource]:
                 axes=tuple(entry.get("axes", ("x", "y", "z"))),
                 origin_mm=tuple(float(v) for v in entry.get("origin_mm", (0, 0, 0))),
                 hide_below_mm=entry.get("hide_below_mm"),
+                hide_above_mm=entry.get("hide_above_mm"),
                 material=entry.get("material"),
             )
             source.rotation()
@@ -191,6 +193,16 @@ def _tessellate(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     # GLB is in metres by convention; STL/OBJ from vendors are usually mm.
     scale = 1000.0 if target.suffix.lower() in (".glb", ".gltf") else 1.0
     return vertices * scale, np.concatenate(faces), np.concatenate(colors).astype(np.float32)
+
+
+def lid_faces(vertices: np.ndarray, faces: np.ndarray, top: float, tol: float = 1e-4) -> np.ndarray:
+    """Faces to drop to show a box without its lid: every face reaching above
+    ``top``, and every downward-facing face.  In a closed solid those are
+    never seen from above, but once the lid is cut open its underside would
+    cover the inside.  The tops of the walls the lid rests on stay."""
+    tri = vertices[faces]
+    up = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])[:, 2]
+    return (tri[:, :, 2] > top + tol).any(axis=1) | (up < 0)
 
 
 def part_mesh(source: CadSource) -> tuple[np.ndarray, np.ndarray, np.ndarray]:

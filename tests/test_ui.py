@@ -8,6 +8,7 @@ from PySide6.QtCore import QPoint, QPointF, Qt  # noqa: E402
 from PySide6.QtGui import QWheelEvent  # noqa: E402
 from PySide6.QtWidgets import QMenu  # noqa: E402
 
+from olayout.catalog.parts import Layer  # noqa: E402
 from olayout.core.layout import Layout  # noqa: E402
 from olayout.ui.main_window import MainWindow  # noqa: E402
 from olayout.ui.panels.checks import IGNORED_ROLE  # noqa: E402
@@ -267,3 +268,36 @@ def test_context_menu_ignores_and_restores_a_parts_problems(window, qtbot):
     restore.trigger()
     settle(qtbot, window)
     assert doc.analysis.issues_for(a)
+
+
+def test_inspector_reports_each_mirror_of_a_beam_expander(window, qtbot):
+    doc = window.doc
+    doc.add_component("laser", 2.0, 10.0)
+    bx = doc.add_component("beam-expander", 8.0, 10.0)
+    doc.set_selection([bx])
+    settle(qtbot, window)
+    info = window.inspector._info.text()
+    assert "Mirror 1: hit at 21.7° incidence" in info and "Mirror 2: hit at 16.9° incidence" in info
+
+
+def test_k_lifts_a_mount_off_its_kb1x1_and_puts_it_back(window, qtbot):
+    doc = window.doc
+    m = doc.add_component("kb-mirror", 6.0, 6.0)
+    plain = doc.add_component("km-mirror", 12.0, 6.0)
+    doc.set_selection([m, plain])
+    settle(qtbot, window)
+    window.act_lift.trigger()
+    settle(qtbot, window)
+    assert doc.layout.component(m).params["kb1x1"]["seated"] is False
+    assert "kb1x1" not in doc.layout.component(plain).params  # no KB1X1: untouched
+    optic_item = window.view.layout_scene.comp_items[m][Layer.OPTIC]
+    assert optic_item._detached and optic_item.has_content()  # drawn faintly
+    window.act_lift.trigger()
+    settle(qtbot, window)
+    assert doc.layout.component(m).params["kb1x1"]["seated"] is True
+    doc.undo_stack.undo()
+    settle(qtbot, window)
+    assert doc.layout.component(m).params["kb1x1"]["seated"] is False
+    # The right-click menu offers it only for KB1X1 units.
+    assert window.act_lift in window._build_context_menu(m).actions()
+    assert window.act_lift not in window._build_context_menu(plain).actions()

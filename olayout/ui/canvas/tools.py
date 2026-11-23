@@ -113,6 +113,11 @@ class SelectTool(Tool):
         return math.hypot(handle.x() - scene_pos.x(), handle.y() - scene_pos.y()) * self.scale <= 9.0
 
     def _incoming_beam(self, comp_id: str):
+        """The beam a mount's optic reflects, for aiming with Alt.  Only single-optic
+        units aim: their angle is the optic's normal (a beam expander's is not)."""
+        placed = self.doc.analysis.units.get(comp_id)
+        if placed is None or len(placed.build.elements) != 1:
+            return None
         for seg in self.doc.analysis.trace.segments:
             if seg.end_owner == comp_id and seg.end_event in ("reflect", "split"):
                 return seg.direction, seg.end

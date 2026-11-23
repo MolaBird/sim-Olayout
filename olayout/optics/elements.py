@@ -41,13 +41,16 @@ class OpticalElement:
     """A thin optical surface: a segment centred at ``center``.
 
     ``normal_angle`` is the direction of the front-surface normal.  The
-    surface extends ``half_aperture`` to either side along the tangent.
+    surface extends ``half_aperture`` to either side of its aperture centre,
+    which sits ``aperture_offset`` along the tangent from ``center`` (non-zero
+    for off-axis optics, whose ``center`` stays on the beam axis).
     """
 
     kind: OpticKind
     center: tuple[float, float]
     normal_angle: float
     half_aperture: float
+    aperture_offset: float = 0.0
     focal_length: float = math.inf  # lens; + converging
     roc: float = math.inf  # mirror radius of curvature; + concave
     reflectance: float = 0.0  # splitter
@@ -65,7 +68,7 @@ class OpticalElement:
 
     @property
     def endpoints(self) -> tuple[np.ndarray, np.ndarray]:
-        c = np.asarray(self.center, dtype=float)
+        c = np.asarray(self.center, dtype=float) + self.tangent * self.aperture_offset
         t = self.tangent * self.half_aperture
         return c - t, c + t
 

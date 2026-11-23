@@ -4,8 +4,9 @@ import math
 
 import pytest
 
+from olayout.catalog import parts as P
 from olayout.catalog.parts import PARTS, Layer
-from olayout.catalog.units import DEFAULT_ROD_LENGTH, collimator_lens_range
+from olayout.catalog.units import COLLIMATOR_MIN_DISTANCE, DEFAULT_ROD_LENGTH, collimator_lens_range
 from olayout.core.breadboard import Breadboard
 from olayout.core.layout import IssueKey, Layout
 from olayout.core.units import MM, NM, UM
@@ -158,7 +159,7 @@ def test_collimator_lens_distance_limited_by_cage_rods():
     near = collimator_lens_range("top")  # housing toward the fiber
     far = collimator_lens_range("top-flipped")  # housing toward the lens: CP35 must clear it
     assert near[1] < 35.0 * MM < far[1]
-    assert far[0] > near[0]
+    assert near[0] == far[0] == COLLIMATOR_MIN_DISTANCE == pytest.approx(5.0 * MM)
     layout = Layout()
     fc = make_component(layout, "collimator", 2.5, 4.5)
     fc.params["lens"] = {"focal_length_mm": 35.0, "distance_mm": 35.0}
@@ -343,3 +344,126 @@ def test_ignored_beam_warning_is_not_active():
     result = analyze(layout)
     assert result.ignored_warnings and not result.active_warnings
     assert result.active_keys_for(bs.id) == []
+
+
+def _expander_with_beam(type_id: str, w0_mm: float = 1.0):
+    layout = Layout()
+    bx = make_component(layout, type_id, 8.0, 10.0)
+    make_component(layout, "laser", 2.0, 10.0, waist_um=w0_mm * 1000.0)
+    return layout, bx, analyze(layout)
+
+
+def _angle(seg) -> float:
+    return math.degrees(math.atan2(seg.direction[1], seg.direction[0]))
+
+
+@pytest.mark.parametrize("type_id, turn", [("beam-expander", 1.0), ("beam-expander-mirrored", -1.0)])
+def test_beam_expander_folds_the_beam_and_expands_it_2x(type_id, turn):
+    _, bx, result = _expander_with_beam(type_id)
+    assert result.issues == [] and result.trace.warnings == []
+    first, second, out = result.trace.segments
+    assert first.end_event == second.end_event == "reflect" and first.end_owner == second.end_owner == bx.id
+    assert first.end == pytest.approx((8.0, 10.0), abs=1e-6)  # mirror 1 sits at the component's position
+    assert second.length == pytest.approx(24.64 * MM, abs=0.01 * MM)  # mirror 1 -> mirror 2 (STEP geometry)
+    assert out.end_event == "escaped"  # out through the port in the 79° face
+    assert _angle(out) == pytest.approx(turn * P.BE02R_EXIT_ANGLE, abs=1e-6)
+    assert P.BE02R_EXIT_ANGLE == pytest.approx(9.57, abs=0.01)
+    # Off-axis spheres: 2.0X in the fold plane, 1.9X across it.
+    assert out.state.tangential.radius / MM == pytest.approx(2.03, abs=0.01)
+    assert out.state.sagittal.radius / MM == pytest.approx(1.89, abs=0.01)
+
+
+def test_beam_expander_works_backwards_as_a_reducer():
+    layout = Layout()
+    bx = make_component(layout, "beam-expander", 8.0, 10.0)
+    # Send a Ø4 mm beam back along the output axis, from outside the output port.
+    exit_mirror = P.BE02R_MIRRORS[1].center
+    a = math.radians(P.BE02R_EXIT_ANGLE)
+    start = (8.0 + exit_mirror[0] + 3.0 * math.cos(a), 10.0 + exit_mirror[1] + 3.0 * math.sin(a))
+    make_component(layout, "laser", *start, angle=P.BE02R_EXIT_ANGLE + 180.0, waist_um=2000.0)
+    first, second, out = analyze(layout).trace.segments
+    assert first.end_owner == second.end_owner == bx.id
+    assert out.start == pytest.approx((8.0, 10.0), abs=1e-6)  # back along the input axis
+    assert out.direction == pytest.approx((-1.0, 0.0), abs=1e-6)
+    assert out.state.tangential.radius / MM == pytest.approx(2.0 / 2.03, abs=0.02)
+    assert out.end_event == "escaped"  # back out through the input port
+
+
+def test_beam_expander_walls_block_stray_beams():
+    layout = Layout()
+    bx = make_component(layout, "beam-expander", 8.0, 10.0)
+    make_component(layout, "laser", 8.0, 5.0, angle=90.0)  # straight into the side wall
+    (seg,) = analyze(layout).trace.segments
+    assert seg.end_event == "blocked" and seg.end_owner == bx.id
+    assert seg.end[1] == pytest.approx(10.0 - 1.382, abs=0.005)  # the wall's outer face at x = 0
+
+
+def test_mirrored_beam_expander_is_the_upside_down_part():
+    upright = PARTS["BE02R"]
+    _, bx, result = _expander_with_beam("beam-expander-mirrored")
+    flipped = result.units[bx.id].build.parts[0]
+    x0, y0, x1, y1 = upright.footprint().bounds
+    assert flipped.footprint().bounds == pytest.approx((x0, -y1, x1, -y0), abs=1e-9)  # unit frame
+    assert flipped.roll is not None and flipped.roll[2][2] == pytest.approx(-1.0)
+
+
+@pytest.mark.parametrize("orientation", ["top", "top-flipped"])
+def test_collimator_reaches_5_mm_with_the_lens_recessed(orientation):
+    """Short-focus lenses sit closer than the CP35 can get, in a lens tube."""
+    layout = Layout()
+    fc = make_component(layout, "collimator", 2.5, 4.5)
+    fc.orientation = orientation
+    fc.params["lens"] = {"focal_length_mm": 5.95, "distance_mm": 5.95}
+    result = analyze(layout)
+    first = result.trace.segments[0]
+    assert first.end_event == "transmit" and first.length == pytest.approx(5.95 * MM)
+    build = result.units[fc.id].build
+    assert any("recessed" in note for note in build.notes)
+    assert result.issues == [] and result.trace.warnings == []
+    # The CP35 rests against the SM1ZB carriage (or housing, when flipped): as close as it gets.
+    cp35 = next(p for p in build.parts if p.part_id == "CP35")
+    stop = P.SM1ZB_CARRIAGE_X if orientation == "top" else -P.SM1ZB_HOUSING_BACK
+    assert cp35.pose.x - P.CP35_THICKNESS == pytest.approx(stop)  # its back face (the post is under the axis)
+    fc.params["lens"]["distance_mm"] = 3.0
+    result = analyze(layout)
+    assert result.trace.segments[0].length == pytest.approx(5.0 * MM)  # the 5 mm minimum
+    assert any("clamped" in note for note in result.units[fc.id].build.notes)
+
+
+@pytest.mark.parametrize("type_id", ["kb-mirror", "kb-h-mirror"])
+def test_fixed_mirror_on_a_kb1x1(type_id):
+    layout = Layout()
+    m = make_component(layout, type_id, 8.5, 5.5, angle=135.0)  # on a hole
+    result = analyze(layout)
+    parts = {p.part_id for p in result.units[m.id].build.parts}
+    assert {"FMP1", "KB1X1", "PH2@BE1" if type_id == "kb-mirror" else "PH2"} <= parts
+    _, cy = optic_center(result, m)
+    make_component(layout, "laser", 2.0, cy)
+    result = analyze(layout)
+    assert result.issues == []
+    first, second = result.trace.segments[:2]
+    assert first.end_event == "reflect" and first.end_owner == m.id
+    assert second.direction == pytest.approx((0.0, 1.0), abs=1e-9)  # folded by 90°
+
+
+@pytest.mark.parametrize("type_id, event", [("kb-mirror", "reflect"), ("kb-h-mirror", "reflect"), ("mag-km-pellicle", "split")])
+def test_mount_lifted_off_its_kb1x1_is_inert(type_id, event):
+    layout = Layout()
+    m = make_component(layout, type_id, 0.0, 0.0, angle=135.0 if event == "reflect" else 160.0)
+    result = analyze(layout)
+    cx, cy = optic_center(result, m)
+    m.x, m.y = 8.0 - cx, 5.0 - cy  # optic on the beam (a hole-mounted unit then reports off-hole: fine here)
+    make_component(layout, "laser", 2.0, 5.0)
+    seated = analyze(layout)
+    assert seated.trace.segments[0].end_event == event
+    on_area = seated.units[m.id].footprints[Layer.OPTIC].area
+
+    m.params.setdefault("kb1x1", {})["seated"] = False
+    lifted = analyze(layout)
+    build = lifted.units[m.id].build
+    assert lifted.trace.segments[0].end_event == "escaped"  # the beam goes straight through
+    assert build.elements == () and build.optic_visuals == ()
+    assert {p.part_id for p in build.parts} >= {"KB1X1-BOTTOM"} and "KB1X1" not in {p.part_id for p in build.parts}
+    mount = {"kb-mirror": "FMP1", "kb-h-mirror": "FMP1", "mag-km-pellicle": "KM100BP"}[type_id]
+    assert mount in {p.part_id for p in build.detached_parts}  # still drawn, faintly
+    assert lifted.units[m.id].footprints[Layer.OPTIC].area < on_area  # and out of the collision checks

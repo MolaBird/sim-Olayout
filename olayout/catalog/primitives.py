@@ -126,16 +126,20 @@ def transform(prim: Primitive, rot: np.ndarray, offset: Vec3 = (0.0, 0.0, 0.0)) 
         center = tuple(rot @ np.asarray(prim.center) + off)
         return replace(prim, center=center, axis=_rotated_axis(rot, prim.axis))
     if isinstance(prim, Prism):
-        if not np.allclose(rot[2], [0, 0, 1]):
-            raise ValueError("prisms can only be rotated about the vertical axis")
+        if np.allclose(rot[2], [0, 0, 1]):
+            z0, z1 = prim.z0, prim.z1
+        elif np.allclose(rot[2], [0, 0, -1]):  # turned upside down: the outline is mirrored
+            z0, z1 = -prim.z1, -prim.z0
+        else:
+            raise ValueError("prisms can only be turned about the vertical axis or upside down")
         rot2 = rot[:2, :2]
         move = lambda ring: tuple(tuple(map(float, rot2 @ np.asarray(p) + off[:2])) for p in ring)
         return replace(
             prim,
             outline=move(prim.outline),
             holes=tuple(move(h) for h in prim.holes),
-            z0=prim.z0 + off[2],
-            z1=prim.z1 + off[2],
+            z0=z0 + off[2],
+            z1=z1 + off[2],
         )
     raise TypeError(f"unknown primitive {prim!r}")
 

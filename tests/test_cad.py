@@ -85,6 +85,18 @@ def test_cad_registry_aligns_mesh(tmp_path, monkeypatch):
         cad.load_registry.cache_clear()
 
 
+def test_lid_is_hidden_but_the_walls_stay():
+    walls_v, walls_f = box_mesh((0, 0, 0), (2, 2, 1))
+    lid_v, lid_f = box_mesh((0, 0, 1), (2, 2, 1.2))
+    vertices = np.vstack([walls_v, lid_v])
+    faces = np.vstack([walls_f, lid_f + len(walls_v)])
+    hidden = cad.lid_faces(vertices, faces, top=1.0)
+    assert hidden[len(walls_f):].all()  # the whole lid
+    kept = faces[~hidden]
+    assert len(kept) == 10  # the walls' four sides and top; their bottom faces down and is never seen
+    assert vertices[kept][:, :, 2].max() == pytest.approx(1.0)
+
+
 def test_bad_axes_rejected():
     with pytest.raises(ValueError):
         cad.CadSource("X", paths.CAD_DIR / "x.step", ("x", "x", "z"), (0, 0, 0)).rotation()

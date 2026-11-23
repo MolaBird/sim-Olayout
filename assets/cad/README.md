@@ -46,6 +46,9 @@ so CAD only changes how a part looks.
      renderer's materials (`anodized`, `anodized_light`, `steel`, ...).
      Thorlabs STEP files are single-colour gray, so set it to match the rest of
      the canvas.
+   * `hide_above_mm` is optional. It hides a lid above that part-frame
+     height, so the inside shows from above (the BE02R's mirrors, for
+     example). Mounted upside down, the part shows its real underside instead.
 
    To check an alignment, draw the part's dimensioned outline over the CAD
    render. The outline should hug the silhouette, and the post axis should sit

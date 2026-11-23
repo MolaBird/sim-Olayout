@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 
 from olayout.catalog.units import DEFAULT_THICKNESS_MM, Mounting, ParamField, get_param, get_unit_type
 from olayout.core.breadboard import PRESETS, Breadboard
+from olayout.core.geometry import point_segment_distance
 from olayout.core.layout import Component
 from olayout.core.units import format_beam_size, normalize_angle
 from olayout.optics.elements import OpticKind
@@ -319,7 +320,7 @@ class InspectorPanel(QScrollArea):
                 "Mouse: drag to move · drag the blue handle to rotate (Shift free, Ctrl 1°, "
                 "Alt aims a mirror's reflected beam at the cursor) · wheel zooms · "
                 "middle/right drag or Space+drag pans · Alt+wheel rotates.\n"
-                "Keys: R rotate 90° · Q/E ±15° (Shift ±1°) · F mounting orientation · "
+                "Keys: R rotate 90° · Q/E ±15° (Shift ±1°) · F mounting orientation · K lift off KB1X1 · "
                 "M measure · P probe · V select · Del delete · Ctrl+D duplicate · Alt disables snapping."
             )
         )
@@ -466,19 +467,24 @@ class InspectorPanel(QScrollArea):
         placed = self.doc.analysis.units.get(comp.id)
         if placed is None or not placed.build.elements:
             return lines
-        element = placed.build.elements[0].transformed(comp.pose)
+        elements = [e.transformed(comp.pose) for e in placed.build.elements]
         for seg in self.doc.analysis.trace.segments:
             if seg.end_owner != comp.id or seg.end_event == "blocked":
                 continue
+            # The optic this beam ends on (a unit may hold several, e.g. a beam expander).
+            element = min(elements, key=lambda e: point_segment_distance(seg.end, *e.endpoints)[0])
             d = np.asarray(seg.direction)
             cos_i = abs(float(np.dot(d, element.normal)))
             incidence = math.degrees(math.acos(min(1.0, cos_i)))
-            offset = float(np.dot(np.asarray(seg.end) - np.asarray(element.center), element.tangent))
+            offset = round(float(np.dot(np.asarray(seg.end) - np.asarray(element.center), element.tangent)), 3) + 0.0
             w = seg.state_at(seg.length).tangential.radius
-            lines.append(
-                f"Beam hits at {incidence:.1f}° incidence, {offset:+.3f}\" off centre, w {format_beam_size(w)}"
-                + (f", {100 * seg.clip:.1f}% passes" if seg.clip < 0.999 else "")
-            )
+            hit = f"{incidence:.1f}° incidence, {offset:+.3f}\" off centre, w {format_beam_size(w)}"
+            if seg.clip < 0.999:
+                hit += f", {100 * seg.clip:.1f}% passes"
+            if len(elements) > 1:
+                lines.append(f"{element.name.removeprefix(comp.label).strip().capitalize()}: hit at {hit}")
+            else:
+                lines.append(f"Beam hits at {hit}")
         blocked = [s for s in self.doc.analysis.trace.segments if s.end_owner == comp.id and s.end_event == "blocked"]
         if blocked:
             lines.append(f"{len(blocked)} beam(s) blocked by this mount's body")
