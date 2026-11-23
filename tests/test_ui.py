@@ -144,6 +144,18 @@ def test_place_tool_and_export(window, qtbot, tmp_path, monkeypatch):
     assert out.exists() and out.stat().st_size > 1000
 
 
+def test_inspector_shows_auto_values(window, qtbot):
+    doc = window.doc
+    doc.add_component("km-mirror", 6.3, 6.2)
+    settle(qtbot, window)
+    inspector = window.inspector
+    _, thickness, _ = inspector._param_widgets["optic.thickness_mm"]
+    assert not thickness.isEnabled() and thickness.value() == pytest.approx(6.0)  # typical mirror
+    _, fork, _ = inspector._param_widgets["fork.angle"]
+    solved = doc.analysis.units[doc.selection[0]].fork.angle
+    assert fork.value() == pytest.approx((solved + 180) % 360 - 180, abs=0.05)
+
+
 def test_inspector_edits_parameters(window, qtbot):
     doc = window.doc
     cid = doc.add_component("lens", 6.0, 6.0)

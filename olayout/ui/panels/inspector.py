@@ -27,10 +27,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from olayout.catalog.units import Mounting, ParamField, get_param, get_unit_type
+from olayout.catalog.units import DEFAULT_THICKNESS_MM, Mounting, ParamField, get_param, get_unit_type
 from olayout.core.breadboard import PRESETS, Breadboard
 from olayout.core.layout import Component
 from olayout.core.units import format_beam_size, normalize_angle
+from olayout.optics.elements import OpticKind
 from olayout.ui.document import LayoutDocument
 
 
@@ -362,13 +363,38 @@ class InspectorPanel(QScrollArea):
                         auto_box.setChecked(value is None)
                         auto_box.blockSignals(False)
                         editor.setEnabled(value is not None)
-                    if value is not None:
-                        editor.setValue(float(value))
+                    shown = value if value is not None else self._auto_value(key, comp)
+                    if shown is not None:
+                        editor.setValue(float(shown))
             except (TypeError, ValueError):
                 pass
             finally:
                 editor.blockSignals(False)
         self._update_visibility(comp)
+
+    def _auto_value(self, key: str, comp: Component) -> float | None:
+        """What an "Auto" parameter currently resolves to, for display."""
+        if key == "optic.thickness_mm":
+            try:
+                kind = OpticKind(get_param(comp.params, "optic.kind", "mirror"))
+            except ValueError:
+                return None
+            return DEFAULT_THICKNESS_MM.get(kind)
+        if key == "fork.angle":
+            placed = self.doc.analysis.units.get(comp.id)
+            if placed is not None and placed.fork is not None:
+                return (placed.fork.angle + 180.0) % 360.0 - 180.0
+        return None
+
+    def _refresh_auto_values(self, comp: Component) -> None:
+        for key, (_field, editor, _label) in self._param_widgets.items():
+            auto_box = editor.property("auto_box") if isinstance(editor, QDoubleSpinBox) else None
+            if auto_box is not None and auto_box.isChecked():
+                shown = self._auto_value(key, comp)
+                if shown is not None:
+                    editor.blockSignals(True)
+                    editor.setValue(float(shown))
+                    editor.blockSignals(False)
 
     def _update_visibility(self, comp: Component) -> None:
         if self._form is None:
@@ -397,6 +423,7 @@ class InspectorPanel(QScrollArea):
         comp = self._component()
         if comp is None or self._info is None or self._checks is None:
             return
+        self._refresh_auto_values(comp)  # e.g. the fork direction the solver picked
         placed = self.doc.analysis.units.get(comp.id)
         lines: list[str] = []
         board = self.doc.layout.breadboard
