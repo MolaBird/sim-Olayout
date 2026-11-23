@@ -16,7 +16,7 @@ python -m olayout examples/demo.olayout.json        # open a layout
 python -m venv .venv
 .venv\Scripts\python -m pip install -r requirements.txt
 .venv\Scripts\python -m olayout
-.venv\Scripts\python -m pytest                      # 89 tests, headless
+.venv\Scripts\python -m pytest                      # 91 tests, headless
 ```
 
 Requirements: Python ≥ 3.11, PySide6, numpy and shapely. `trimesh` and
