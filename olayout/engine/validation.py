@@ -55,10 +55,12 @@ def find_overlaps(units: list[PlacedUnit], layer: Layer) -> list[Issue]:
     for i, j in zip(left, right):
         if i >= j:
             continue
+        a, b = shapes[i][0], shapes[j][0]
+        if a.unit.structural and b.unit.structural:
+            continue  # frame members and boards are joined to one another by design
         overlap = geoms[i].intersection(geoms[j])
         if overlap.area <= OVERLAP_AREA:
             continue
-        a, b = shapes[i][0], shapes[j][0]
         where = "bases" if layer is Layer.BASE else "mounts"
         issues.append(
             Issue(
@@ -85,9 +87,8 @@ def find_issues(units: list[PlacedUnit], board: Breadboard) -> list[Issue]:
         if mounting is Mounting.FREE:
             continue
         if mounting is Mounting.HOLE and board.hole_at(comp.x, comp.y) is None:
-            issues.append(
-                Issue(IssueKind.OFF_HOLE, f"{_name(unit)}: post holder is not on a breadboard hole", (comp.id,))
-            )
+            anchor = unit.unit.hole_anchor.lower()
+            issues.append(Issue(IssueKind.OFF_HOLE, f"{_name(unit)}: {anchor} is not on a breadboard hole", (comp.id,)))
         if mounting is Mounting.PEDESTAL and (unit.fork is None or unit.fork.hole is None):
             issues.append(
                 Issue(IssueKind.NO_HOLE, f"{_name(unit)}: no breadboard hole within the clamping fork's reach", (comp.id,))

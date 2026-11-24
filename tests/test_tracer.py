@@ -86,6 +86,19 @@ def test_clipping_is_reported():
     assert any("clipped" in w.message for w in result.warnings)
 
 
+def test_oblique_incidence_widens_the_footprint():
+    """A 45° mirror sees the beam 1/cos 45° wider: the same edge clips it more than at normal incidence."""
+    w = 2 * MM
+    half = 0.08
+    normal = OpticalElement(OpticKind.MIRROR, (5.0, 0.0), 180.0, half, owner="n")
+    tilted = OpticalElement(OpticKind.MIRROR, (5.0, 0.0), 135.0, half, owner="t")
+    straight_on = BeamTracer([normal], [], BOUNDS).trace([emitter(waist=w)]).segments[0].clip
+    at_45 = BeamTracer([tilted], [], BOUNDS).trace([emitter(waist=w)]).segments[0].clip
+    # The beam barely grows over 5" (Rayleigh range ~20 m), so its waist is its size at the mirror.
+    assert straight_on == pytest.approx(math.erf(math.sqrt(2) * half / w), rel=1e-3)
+    assert at_45 == pytest.approx(math.erf(math.sqrt(2) * half * math.cos(math.radians(45)) / w), rel=1e-3)
+
+
 def test_curved_mirror_is_astigmatic_off_axis():
     curved = mirror(10, 0, 135.0, roc=20.0)
     result = BeamTracer([curved], [], BOUNDS).trace([emitter(waist=2 * MM)])

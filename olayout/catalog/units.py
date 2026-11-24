@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from functools import cached_property, partial
 from typing import Any, Callable
@@ -101,6 +101,17 @@ def _num(params: dict, key: str, default: float, lo: float = -math.inf, hi: floa
 # Build products
 # ==========================================================================
 @dataclass(frozen=True)
+class Stretch:
+    """A part that is uniform along x (a rail, a board, a cage rod) is drawn by
+    rendering a short piece of it once and stretching its middle to the real
+    length, so every length draws instantly and looks the same."""
+
+    template: tuple[Primitive, ...]  # the same part, but short
+    template_span: tuple[float, float]  # x extent of the template's solid
+    span: tuple[float, float]  # x extent of the real part
+
+
+@dataclass(frozen=True)
 class PlacedPart:
     """A part positioned inside a unit (2D pose in the unit frame)."""
 
@@ -111,6 +122,7 @@ class PlacedPart:
     sprite_name: str
     roll: tuple[tuple[float, ...], ...] | None = None  # orientation applied to the part (for CAD meshes)
     z_offset: float = 0.0  # vertical shift applied to the part (for CAD meshes)
+    stretch: Stretch | None = None  # drawn by stretching a short template (see Stretch)
 
     @cached_property
     def top(self) -> float:
@@ -154,17 +166,21 @@ class UnitBuild:
     notes: tuple[str, ...] = ()
     # Lifted off (a mount taken off its KB1X1): drawn faintly, but no optics or collisions.
     detached_parts: tuple[PlacedPart, ...] = ()
+    # Space taken in a layer by something drawn in the other one: a post or board
+    # standing on the table reaches up through the beam plane.
+    keepouts: tuple[tuple[Layer, Polygon], ...] = ()
 
     @cached_property
     def _footprints(self) -> dict[Layer, object]:
         result = {}
         for layer in Layer:
             shapes = [p.footprint() for p in self.parts if p.layer is layer]
+            shapes += [shape for keep_layer, shape in self.keepouts if keep_layer is layer]
             result[layer] = as_polygonal(shapely.union_all(shapes)) if shapes else Polygon()
         return result
 
     def footprint(self, layer: Layer):
-        """Union of the part footprints in one layer (unit frame, cached)."""
+        """Union of the part footprints (and keep-outs) in one layer (unit frame, cached)."""
         return self._footprints[layer]
 
     @cached_property
@@ -189,6 +205,14 @@ class UnitType:
     builder: Callable[["UnitType", Component], UnitBuild]
     orientation_part: str | None = None  # part whose taps give the orientation choices
     fields: tuple[ParamField, ...] = ()
+    # A straight member running along +x from its origin (a rail, a board): the
+    # parameter holding its length.  It is drawn end to end when placed.
+    length_key: str | None = None
+    # Frame members and boards are joined to one another (corners, boards in
+    # slots), so they never collide with each other; they still do with the rest.
+    structural: bool = False
+    hole_anchor: str = "Post holder"  # what sits on the hole, for a hole-mounted unit
+    preview_params: tuple[tuple[str, Any], ...] = ()  # (key, value) overrides for the library thumbnail
 
     def orientations(self) -> list[tuple[str, str]]:
         if not self.orientation_part:
@@ -200,6 +224,13 @@ class UnitType:
         for f in self.fields:
             set_param(params, f.key, f.default)
         return params
+
+    def member_length(self, params: dict) -> float | None:
+        """A straight member's length (see ``length_key``), clamped to its field's range."""
+        if not self.length_key:
+            return None
+        field = next(f for f in self.fields if f.key == self.length_key)
+        return _num(params, field.key, field.default, field.minimum, field.maximum)
 
     def build(self, component: Component) -> UnitBuild:
         return self.builder(self, component)
@@ -532,11 +563,12 @@ def build_beam_expander(unit: UnitType, comp: Component, *, mirrored: bool) -> U
     side = "right" if mirrored else "left"
     first, second = P.BE02R_MIRRORS
     edge = min(-first.aperture[0], first.aperture[1])  # mirror 1's edge nearest the beam axis
+    across = edge * abs(math.cos(math.radians(first.normal_angle)))  # as the obliquely incident beam sees it
     notes = (
         f"2X: convex R {-first.roc / MM:.1f} mm, then concave R {second.roc / MM:.0f} mm",
         f"The beam leaves {P.BE02R_EXIT_ANGLE:.1f}° to the {side} of its input direction",
         # A Gaussian loses 1% past an edge 1.645 w / √2 from its centre.
-        f"Mirror 1's edge is {edge / MM:.1f} mm from the axis: beams over ~Ø{2 * math.sqrt(2) * edge / 1.645 / MM:.1f} mm clip",
+        f"Mirror 1's edge is {edge / MM:.1f} mm from the axis: beams over ~Ø{2 * math.sqrt(2) * across / 1.645 / MM:.1f} mm clip",
     )
     return UnitBuild(
         parts=tuple(parts),
@@ -648,10 +680,290 @@ def build_collimator(unit: UnitType, comp: Component) -> UnitBuild:
     )
 
 
+STRETCH_TEMPLATE = 1.0  # inches: the short piece a uniform part's sprite is rendered from
+
+
 def _cage_rod(length: float, pose: Pose, z: float) -> PlacedPart:
-    """A plain Ø6 mm cage rod of any length (drawn from its own primitive)."""
-    prims = transform_all(P.cage_rod_prims(length), np.eye(3), (0.0, 0.0, z))
-    return PlacedPart("ER", Layer.OPTIC, prims, pose, f"ER-{length:g}in", z_offset=z)
+    """A plain Ø6 mm cage rod of any length, centred on its pose."""
+    def prims(rod_length: float) -> tuple[Primitive, ...]:
+        return transform_all(P.cage_rod_prims(rod_length), np.eye(3), (0.0, 0.0, z))
+
+    half, template_half = length / 2, STRETCH_TEMPLATE / 2
+    stretch = Stretch(prims(STRETCH_TEMPLATE), (-template_half, template_half), (-half, half))
+    return PlacedPart("ER", Layer.OPTIC, prims(length), pose, f"ER-{length:g}in", z_offset=z, stretch=stretch)
+
+
+def _straight_member(part_id: str, layer: Layer, prims: Callable[[float], tuple], length: float) -> PlacedPart:
+    """A part uniform along x from its origin to ``length`` (a rail, a board)."""
+    stretch = Stretch(prims(STRETCH_TEMPLATE), (0.0, STRETCH_TEMPLATE), (0.0, length))
+    return PlacedPart(part_id, layer, prims(length), Pose(), f"{part_id}-{length:g}in", stretch=stretch)
+
+
+# Objective = LMM40X reflective objective, threaded into an M1RMSS adapter in a
+# CP35 cage plate standing on its post.  The objective is reflective (a
+# convex and a concave mirror), but in the beam plane it acts as an ideal
+# lens: it is modelled as a thin lens of its effective focal length, placed
+# at its principal plane so that a collimated beam focuses one working
+# distance in front of the nose.  Its entrance pupil is the aperture; the
+# central obscuration of the secondary mirror is not modelled.
+#
+# The CP35 is drawn in the collimator's orientation (rolled 180° about the
+# optic axis), whose CAD sprite is committed: from above, a cage plate looks
+# the same either way up, only the setscrews on its top edge are hidden.
+CP35_SPRITE_ROLL = rotation_matrix("x", 180)
+
+OBJECTIVE_FIELDS = (
+    ParamField(
+        "objective.focal_length_mm",
+        "Effective focal length",
+        "float",
+        P.LMM40X_EFL_MM,
+        unit="mm",
+        minimum=0.5,
+        maximum=1000.0,
+        step=0.1,
+        decimals=2,
+        tooltip="LMM40X-P01: 5.0 mm (40X with a 200 mm tube lens)",
+    ),
+    ParamField(
+        "objective.working_distance_mm",
+        "Working distance",
+        "float",
+        P.LMM40X_WD_MM,
+        unit="mm",
+        minimum=0.0,
+        maximum=1000.0,
+        step=0.1,
+        decimals=2,
+        tooltip="Nose to focus. LMM40X-P01: 7.8 mm",
+    ),
+    ParamField(
+        "objective.pupil_mm",
+        "Entrance pupil Ø",
+        "float",
+        P.LMM40X_PUPIL_MM,
+        unit="mm",
+        minimum=0.1,
+        maximum=50.0,
+        step=0.1,
+        decimals=2,
+        tooltip="The aperture beams are clipped by. LMM40X-P01: 5.1 mm (NA 0.50)",
+    ),
+)
+
+
+def build_objective(unit: UnitType, comp: Component) -> UnitBuild:
+    """CP35 on the post (its mid-plane over the post axis), the M1RMSS ring
+    threaded in flush with its front face, and the LMM40X screwed in until its
+    shoulder seats on the ring, pointing along +x toward the sample."""
+    params = comp.params
+    pedestal = unit.mounting is Mounting.PEDESTAL
+    parts: list[PlacedPart] = _pedestal_parts() if pedestal else _post_holder_parts(False)
+    plate_front = P.CP35_THICKNESS / 2
+    parts.append(_placed("CP35", Pose(plate_front, 0.0, 0.0), roll=CP35_SPRITE_ROLL))
+    parts.append(_placed("M1RMSS", Pose(plate_front, 0.0, 0.0)))
+    parts.append(_placed("LMM40X", Pose(plate_front, 0.0, 0.0)))
+    nose = plate_front + P.LMM40X_NOSE
+
+    efl = _num(params, "objective.focal_length_mm", P.LMM40X_EFL_MM, 0.5, 1000.0) * MM
+    wd = _num(params, "objective.working_distance_mm", P.LMM40X_WD_MM, 0.0, 1000.0) * MM
+    pupil = _num(params, "objective.pupil_mm", P.LMM40X_PUPIL_MM, 0.1, 50.0) * MM
+    principal = nose + wd - efl  # the equivalent thin lens
+    element = OpticalElement(
+        kind=OpticKind.LENS,
+        center=(principal, 0.0),
+        normal_angle=0.0,
+        half_aperture=pupil / 2,
+        focal_length=efl,
+        name=f"{comp.label} objective".strip(),
+    )
+    where = "in front of" if principal >= nose else "behind"
+    notes = (
+        f"Thin lens f = {efl / MM:.2f} mm, {abs(principal - nose) / MM:.1f} mm {where} the nose (principal plane)",
+        f"A collimated beam focuses {wd / MM:.2f} mm in front of the nose; NA ≈ {pupil / (2 * efl):.2f}",
+        "Reflective: its two mirrors are not traced and the central obscuration is ignored",
+    )
+    return UnitBuild(
+        parts=tuple(parts),
+        elements=(element,),
+        blockers=tuple(_beam_blockers(parts)),
+        notes=notes,
+    )
+
+
+# Knife-edge combiner = MRAK25-P01 prism mirror on a KM100B platform, on a
+# pedestal base, its knife edge over the post.  Each silvered leg is a flat
+# mirror reaching right up to the edge, so two beams arriving square to the
+# output from opposite sides leave side by side, as close as their own sizes
+# allow.  A beam's centre should stay 1.5 w from the edge (1.3 w loses 0.5%).
+def build_knife_edge(unit: UnitType, comp: Component) -> UnitBuild:
+    parts = [*_pedestal_parts(), _placed("KM100B"), _placed("MRAK25")]
+    reach = P.MRAK25_LEG / math.sqrt(2)  # each leg runs back this far, and as far to its side
+    elements, visuals = [], []
+    for side, sign in (("left", 1.0), ("right", -1.0)):  # as seen looking along the output
+        centre = (-reach / 2, sign * reach / 2)
+        normal = 45.0 * sign  # each leg turns a beam coming from its side toward +x
+        elements.append(
+            OpticalElement(
+                kind=OpticKind.MIRROR,
+                center=centre,
+                normal_angle=normal,
+                half_aperture=P.MRAK25_LEG / 2,
+                name=f"{comp.label} {side} leg".strip(),
+            )
+        )
+        visuals.append(OpticVisual(OpticKind.MIRROR, Pose(*centre, normal), P.MRAK25_LEG, 0.012))
+    # The glass behind the silvered legs, kept just behind them so the legs themselves reflect.
+    glass = Polygon(P.mrak25_outline()).buffer(-0.003, join_style="mitre")
+    holder = [p for p in parts if p.part_id != "MRAK25"]
+    notes = (
+        "Beams arriving square to the angle from either side leave along it, side by side",
+        "Keep each beam's centre 1.5 w from the edge (at 1.3 w it loses 0.5%)",
+        "MRAK25 and KM100B are drawn from catalog dimensions (no vendor CAD)",
+    )
+    return UnitBuild(
+        parts=tuple(parts),
+        elements=tuple(elements),
+        blockers=(*_beam_blockers(holder), Blocker(glass)),
+        optic_visuals=tuple(visuals),
+        notes=notes,
+    )
+
+
+# Iris = ID25 on a post, in a post holder (on a pedestal base or in a hole).
+# The opening passes beams (clipping the ones it is too small for); the
+# blades and the housing stop everything else.
+IRIS_FIELDS = (
+    ParamField(
+        "iris.aperture_mm",
+        "Aperture Ø",
+        "float",
+        3.0,
+        unit="mm",
+        minimum=P.ID25_APERTURE_MM[0],
+        maximum=P.ID25_APERTURE_MM[1],
+        step=0.5,
+        decimals=2,
+        tooltip="ID25: Ø1 mm to Ø25 mm. Close it to about the beam's 1/e² diameter to centre a beam on it.",
+    ),
+)
+
+
+def build_iris(unit: UnitType, comp: Component) -> UnitBuild:
+    pedestal = unit.mounting is Mounting.PEDESTAL
+    parts = [*(_pedestal_parts() if pedestal else _post_holder_parts(False)), _placed("ID25")]
+    aperture = _num(comp.params, "iris.aperture_mm", 3.0, *P.ID25_APERTURE_MM) * MM
+    half, bore = aperture / 2, P.ID25_OPENING
+    element = OpticalElement(
+        kind=OpticKind.WINDOW, center=(0.0, 0.0), normal_angle=0.0, half_aperture=half, name=f"{comp.label} iris".strip()
+    )
+    blades = [Blocker(box(-0.01, lo, 0.01, hi)) for lo, hi in ((half, bore), (-bore, -half)) if hi - lo > 1e-6]
+    return UnitBuild(
+        parts=tuple(parts),
+        elements=(element,),
+        blockers=(*_beam_blockers(parts), *blades),
+        notes=(f"Open to Ø{aperture / MM:.1f} mm; the blades stop beams outside it",),
+    )
+
+
+# Enclosure framing.  What a member meets depends on its height: beams only
+# cross the beam plane, mounts sit at beam height, bases on the table.  Posts
+# and boards stand from the table to above the beams, so they take space in
+# both layers and stop beams; a rail lying on the table is only in the way of
+# bases, a rail at beam height only of mounts and beams.
+RAIL_RUNS = (
+    ("beam", "At beam height (blocks beams)"),
+    ("table", "Lying on the table (beams pass over)"),
+)
+
+
+def build_tslot_rail(unit: UnitType, comp: Component) -> UnitBuild:
+    length = unit.member_length(comp.params)
+    if get_param(comp.params, "rail.run", "beam") == "table":
+        rail = _straight_member("TSLOT-RAIL", Layer.BASE, lambda n: P.tslot_rail_prims(n, P.TSLOT_SIZE / 2), length)
+        return UnitBuild(parts=(rail,), notes=(f"{length:g}\" rail on the table: beams pass over it",))
+    rail = _straight_member("TSLOT-RAIL", Layer.OPTIC, lambda n: P.tslot_rail_prims(n, 0.0), length)
+    return UnitBuild(
+        parts=(rail,),
+        blockers=tuple(_beam_blockers([rail])),
+        notes=(f"{length:g}\" rail across the beam plane: it blocks beams",),
+    )
+
+
+def _standing(part: PlacedPart, notes: tuple[str, ...]) -> UnitBuild:
+    """A post or board: drawn with the mounts, in the way of bases too, and it stops beams."""
+    return UnitBuild(
+        parts=(part,),
+        blockers=tuple(_beam_blockers([part])),
+        keepouts=((Layer.BASE, part.footprint()),),
+        notes=notes,
+    )
+
+
+def build_tslot_post(unit: UnitType, comp: Component) -> UnitBuild:
+    post = PlacedPart("TSLOT-POST", Layer.OPTIC, get_part("TSLOT-POST").prims, Pose(), "TSLOT-POST")
+    return _standing(post, ("Upright post: it blocks beams and takes space on the table",))
+
+
+def build_board(unit: UnitType, comp: Component) -> UnitBuild:
+    length = unit.member_length(comp.params)
+    thickness = _num(comp.params, "board.thickness_in", P.BOARD_THICKNESS, 0.02, 1.0)
+    board = _straight_member("BOARD", Layer.OPTIC, lambda n: P.board_prims(n, thickness), length)
+    return _standing(board, (f"{length:g}\" × {thickness:g}\" board: it blocks beams",))
+
+
+# Sample stage = MAX311D NanoMax screwed to the breadboard, a sample on its
+# platform.  The sample faces out of one of the platform's two free faces;
+# the stage's travel (4 mm per axis) moves it toward the objective (focus)
+# and across.  Only the sample moves: the drawing of the stage stays put.
+STAGE_FACES = (
+    ("x", "Facing away from the X drive"),
+    ("y", "Facing away from the Y and Z drives"),
+)
+STAGE_YAW = {"x": 180.0, "y": 90.0}  # turns the chosen face toward +x (the unit's angle)
+SAMPLE_KINDS = (OpticKind.BLOCK, OpticKind.MIRROR, OpticKind.SPLITTER, OpticKind.WINDOW, OpticKind.NONE)
+
+
+def build_sample_stage(unit: UnitType, comp: Component) -> UnitBuild:
+    params = comp.params
+    face = get_param(params, "stage.face", "x")
+    face = face if face in STAGE_YAW else "x"
+    stage_pose = Pose(0.0, 0.0, STAGE_YAW[face])
+    parts = [_placed("MAX311D", stage_pose)]
+
+    half_travel = P.MAX311D_TRAVEL_MM / 2
+    wanted = (_num(params, "stage.focus_mm", 0.0), _num(params, "stage.lateral_mm", 0.0))
+    focus, lateral = (min(max(t, -half_travel), half_travel) for t in wanted)
+    standoff = _num(params, "sample.standoff_mm", 0.0, -60.0, 60.0)
+    fx, fy = stage_pose.apply(P.max311d_face_centre(face))
+    surface = Pose(fx + (standoff + focus) * MM, fy + lateral * MM, 0.0)
+
+    notes = [
+        f"Sample surface {standoff:+.1f} mm from the platform face; travel {focus:+.2f} mm toward the "
+        f"objective and {lateral:+.2f} mm across (±{half_travel:g} mm)",
+        "The platform top is 2.46\" above the table: the sample is assumed raised to beam height",
+    ]
+    if any(abs(t) > half_travel + 1e-9 for t in wanted):
+        notes.append(f"Requested travel is beyond ±{half_travel:g} mm: clamped")
+    kind = _optic_kind(params, OpticKind.BLOCK)
+    if kind is OpticKind.NONE:
+        return UnitBuild(parts=tuple(parts), notes=tuple(notes))
+
+    width = _num(params, "sample.width_mm", 25.4, 1.0, 100.0) * MM
+    thickness = optic_thickness(params, kind)
+    parts.append(
+        PlacedPart("SAMPLE", Layer.OPTIC, P.sample_prims(width, thickness), surface, f"SAMPLE-{width:.3f}x{thickness:.3f}")
+    )
+    # The sample is the optic itself: only a reflecting or opaque one is solid behind its surface.
+    sample = replace(get_part("SAMPLE"), optic_slot=P.OpticSlot(0.0, "rear", width, width))
+    elements, substrate, visuals = _optic_elements(sample, surface, params, OpticKind.BLOCK, f"{comp.label} sample")
+    return UnitBuild(
+        parts=tuple(parts),
+        elements=tuple(elements),
+        blockers=tuple(substrate),
+        optic_visuals=tuple(visuals),
+        notes=tuple(notes),
+    )
 
 
 def build_laser(unit: UnitType, comp: Component) -> UnitBuild:
@@ -676,6 +988,20 @@ def build_laser(unit: UnitType, comp: Component) -> UnitBuild:
 # ==========================================================================
 # Registry
 # ==========================================================================
+FORK_ANGLE = ParamField(
+    "fork.angle",
+    "Fork direction",
+    "float",
+    None,
+    unit="°",
+    minimum=-360,
+    maximum=360,
+    step=15,
+    decimals=1,
+    tooltip="Preferred clamping-fork direction (unit frame); empty = automatic",
+)
+
+
 def _mount_unit(
     uid: str,
     name: str,
@@ -707,20 +1033,7 @@ def _mount_unit(
             for f in fields
         ]
     if mounting is Mounting.PEDESTAL:
-        fields.append(
-            ParamField(
-                "fork.angle",
-                "Fork direction",
-                "float",
-                None,
-                unit="°",
-                minimum=-360,
-                maximum=360,
-                step=15,
-                decimals=1,
-                tooltip="Preferred clamping-fork direction (unit frame); empty = automatic",
-            )
-        )
+        fields.append(FORK_ANGLE)
     return UnitType(
         id=uid,
         name=name,
@@ -753,6 +1066,44 @@ BP108_FIELDS = (
 )
 
 
+def _length_field(prefix: str, default: float) -> ParamField:
+    return ParamField(
+        f"{prefix}.length_in", "Length", "float", default, unit="in", minimum=0.5, maximum=144.0, step=0.5,
+        decimals=3, tooltip="From the component's position along its angle",
+    )
+
+
+def _sample_fields() -> tuple[ParamField, ...]:
+    optic = [
+        ParamField(**{**f.__dict__, "default": 1.0, "tooltip": "Auto = 1 mm"}) if f.key == "optic.thickness_mm" else f
+        for f in optic_fields(OpticKind.BLOCK, SAMPLE_KINDS)
+    ]
+    return (
+        ParamField(
+            "stage.face", "Sample face", "choice", "x", choices=STAGE_FACES,
+            tooltip="Which free face of the platform the sample looks out of (the two are mirror images)",
+        ),
+        *optic,
+        ParamField("sample.width_mm", "Sample width", "float", 25.4, unit="mm", minimum=1.0, maximum=100.0, step=1.0,
+                   decimals=2),
+        ParamField(
+            "sample.standoff_mm", "Sample position", "float", 0.0, unit="mm", minimum=-60.0, maximum=60.0, step=0.5,
+            decimals=2, tooltip="Sample surface beyond the platform's face (negative: over the platform)",
+        ),
+        ParamField(
+            "stage.focus_mm", "Travel toward objective", "float", 0.0, unit="mm", minimum=-2.0, maximum=2.0,
+            step=0.01, decimals=3, tooltip="The stage's travel along the sample's normal: ±2 mm",
+        ),
+        ParamField(
+            "stage.lateral_mm", "Travel across", "float", 0.0, unit="mm", minimum=-2.0, maximum=2.0, step=0.01,
+            decimals=3, tooltip="The stage's travel across the sample: ±2 mm",
+        ),
+    )
+
+
+SAMPLE_STAGE_FIELDS = _sample_fields()
+
+
 def _build_registry() -> dict[str, UnitType]:
     units = [
         _mount_unit(
@@ -775,6 +1126,18 @@ def _build_registry() -> dict[str, UnitType]:
             prefix="M",
             mount_id="KM100CP",
             bom=("KM100CP", "PH2", 'TR-series Ø1/2" post'),
+            default_kind=OpticKind.MIRROR,
+        ),
+        _mount_unit(
+            "sq-km-mirror",
+            "Kinematic square mirror",
+            category="Mirrors",
+            description='PFSQ10-03-P01 1" x 1" protected silver mirror (6 mm thick) in a KMSR compact kinematic mount, '
+            "on a pedestal base (PH2 + BE1 + CF125C).",
+            mounting=Mounting.PEDESTAL,
+            prefix="M",
+            mount_id="KMSR",
+            bom=("KMSR", "PFSQ10-03-P01", *BASE_BOM),
             default_kind=OpticKind.MIRROR,
         ),
         _mount_unit(
@@ -839,6 +1202,43 @@ def _build_registry() -> dict[str, UnitType]:
             default_kind=OpticKind.SPLITTER,
             optic_param_fields=BP108_FIELDS,
         ),
+        UnitType(
+            id="knife-edge",
+            name="Knife-edge prism mirror (MRAK25)",
+            category="Mirrors",
+            description="MRAK25-P01 knife-edge right-angle prism mirror on a KM100B kinematic platform, on a "
+            "pedestal base (PH2 + BE1 + CF125C), its edge over the post. Combines two beams arriving from "
+            "opposite sides into neighbouring beams leaving along the component's angle.",
+            mounting=Mounting.PEDESTAL,
+            label_prefix="KE",
+            bill_of_materials=("MRAK25-P01", "KM100B", *BASE_BOM),
+            builder=build_knife_edge,
+            fields=(FORK_ANGLE,),
+        ),
+        UnitType(
+            id="iris",
+            name="Iris (ID25)",
+            category="Apertures",
+            description="ID25 iris diaphragm (Ø1–25 mm) on a pedestal base (PH2 + BE1 + CF125C). "
+            "Angle = the direction of the beam through it.",
+            mounting=Mounting.PEDESTAL,
+            label_prefix="I",
+            bill_of_materials=("ID25", *BASE_BOM),
+            builder=build_iris,
+            fields=(*IRIS_FIELDS, FORK_ANGLE),
+        ),
+        UnitType(
+            id="h-iris",
+            name="Iris (ID25), hole-mounted",
+            category="Apertures",
+            description="ID25 iris diaphragm (Ø1–25 mm) on a PH2 screwed into a hole. "
+            "Angle = the direction of the beam through it.",
+            mounting=Mounting.HOLE,
+            label_prefix="I",
+            bill_of_materials=("ID25", "PH2", 'TR-series Ø1/2" post'),
+            builder=build_iris,
+            fields=IRIS_FIELDS,
+        ),
         _mount_unit(
             "lens",
             "Lens",
@@ -860,6 +1260,30 @@ def _build_registry() -> dict[str, UnitType]:
             mount_id="FMP1",
             bom=("FMP1", "PH2", 'TR-series Ø1/2" post'),
             default_kind=OpticKind.LENS,
+        ),
+        UnitType(
+            id="objective",
+            name="Reflective objective (LMM40X)",
+            category="Objectives",
+            description="LMM40X-P01 40X reflective objective in an M1RMSS adapter, in a CP35 cage plate on a pedestal "
+            "base (PH2 + BE1 + CF125C). Angle = the direction it looks (toward the focus).",
+            mounting=Mounting.PEDESTAL,
+            label_prefix="OBJ",
+            bill_of_materials=("LMM40X-P01", "M1RMSS", "CP35", *BASE_BOM),
+            builder=build_objective,
+            fields=(*OBJECTIVE_FIELDS, FORK_ANGLE),
+        ),
+        UnitType(
+            id="h-objective",
+            name="Reflective objective (LMM40X), hole-mounted",
+            category="Objectives",
+            description="LMM40X-P01 40X reflective objective in an M1RMSS adapter, in a CP35 cage plate on a PH2 "
+            "screwed into a hole. Angle = the direction it looks (toward the focus).",
+            mounting=Mounting.HOLE,
+            label_prefix="OBJ",
+            bill_of_materials=("LMM40X-P01", "M1RMSS", "CP35", "PH2", 'TR-series Ø1/2" post'),
+            builder=build_objective,
+            fields=OBJECTIVE_FIELDS,
         ),
         UnitType(
             id="collimator",
@@ -951,6 +1375,67 @@ def _build_registry() -> dict[str, UnitType]:
             for mirrored in (False, True)
         ),
         UnitType(
+            id="sample-stage",
+            name="Sample stage (MAX311D)",
+            category="Stages",
+            description="MAX311D NanoMax 3-axis flexure stage screwed to the breadboard, with a sample on its "
+            "platform. Angle = the direction the sample faces; its travel moves the sample ±2 mm.",
+            mounting=Mounting.HOLE,
+            label_prefix="ST",
+            bill_of_materials=("MAX311D", "1/4\"-20 cap screws", "sample"),
+            builder=build_sample_stage,
+            fields=SAMPLE_STAGE_FIELDS,
+            hole_anchor="Base centre",
+        ),
+        UnitType(
+            id="tslot-rail",
+            name='T-slot rail, 1/2" (80/20)',
+            category="Enclosure",
+            description='1/2" four-slot aluminium extrusion. Drag on the board to draw it from end to end. '
+            "At beam height it blocks beams; lying on the table, beams pass over it.",
+            mounting=Mounting.FREE,
+            label_prefix="FR",
+            bill_of_materials=('1/2" T-slot extrusion',),
+            builder=build_tslot_rail,
+            fields=(_length_field("rail", 12.0), ParamField("rail.run", "Height", "choice", "beam", choices=RAIL_RUNS)),
+            length_key="rail.length_in",
+            structural=True,
+            preview_params=(("rail.length_in", 2.5),),
+        ),
+        UnitType(
+            id="tslot-post",
+            name='T-slot post, 1/2" (80/20)',
+            category="Enclosure",
+            description='1/2" four-slot aluminium extrusion standing upright, e.g. at an enclosure corner. '
+            "It blocks beams.",
+            mounting=Mounting.FREE,
+            label_prefix="FP",
+            bill_of_materials=('1/2" T-slot extrusion',),
+            builder=build_tslot_post,
+            structural=True,
+        ),
+        UnitType(
+            id="board",
+            name="Enclosure board",
+            category="Enclosure",
+            description="Opaque panel standing on edge, e.g. 1/8\" hardboard in the T-slots of the frame. "
+            "Drag on the board to draw it from end to end. It blocks beams.",
+            mounting=Mounting.FREE,
+            label_prefix="BD",
+            bill_of_materials=("Enclosure panel",),
+            builder=build_board,
+            fields=(
+                _length_field("board", 12.0),
+                ParamField(
+                    "board.thickness_in", "Thickness", "float", P.BOARD_THICKNESS, unit="in", minimum=0.02,
+                    maximum=1.0, step=0.0625, decimals=4, tooltip="1/8\" hardboard fits a 1/2\" T-slot",
+                ),
+            ),
+            length_key="board.length_in",
+            structural=True,
+            preview_params=(("board.length_in", 1.25),),
+        ),
+        UnitType(
             id="base",
             name="Pedestal base",
             category="Bases",
@@ -959,19 +1444,17 @@ def _build_registry() -> dict[str, UnitType]:
             label_prefix="B",
             bill_of_materials=BASE_BOM,
             builder=build_base,
-            fields=(
-                ParamField(
-                    "fork.angle", "Fork direction", "float", None, unit="°", minimum=-360, maximum=360, step=15,
-                    decimals=1, tooltip="Preferred clamping-fork direction; empty = automatic",
-                ),
-            ),
+            fields=(FORK_ANGLE,),
         ),
     ]
     return {u.id: u for u in units}
 
 
 UNIT_TYPES: dict[str, UnitType] = _build_registry()
-CATEGORY_ORDER = ("Sources", "Mirrors", "Beamsplitters", "Lenses", "Beam expanders", "Bases")
+CATEGORY_ORDER = (
+    "Sources", "Mirrors", "Beamsplitters", "Lenses", "Objectives", "Apertures", "Stages", "Beam expanders", "Bases",
+    "Enclosure",
+)
 
 
 def get_unit_type(type_id: str) -> UnitType:

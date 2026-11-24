@@ -24,6 +24,7 @@ from olayout import __version__, paths
 from olayout.catalog.units import UNIT_TYPES, Mounting, get_unit_type, has_kb1x1
 from olayout.core.breadboard import DEFAULT_PRESET, PRESETS, Breadboard
 from olayout.core.layout import FILE_SUFFIX, Component, Layout, LayoutFormatError
+from olayout.engine.combine import splitter_element
 from olayout.ui.canvas.tools import PlaceTool
 from olayout.ui.canvas.view import LayoutView
 from olayout.ui.document import LayoutDocument
@@ -58,6 +59,8 @@ SHORTCUTS_HELP = """
 <h3>Keys</h3>
 <table cellspacing=4>
 <tr><td><b>V / M / P</b></td><td>select · measure · probe tool</td></tr>
+<tr><td><b>C</b></td><td>combine two beams: click the beam to transmit, then the beam to reflect onto it; a beamsplitter
+(the selected one, or a new pellicle) goes where they cross, turned and mounted so both leave as one</td></tr>
 <tr><td><b>N</b></td><td>place a beam source</td></tr>
 <tr><td><b>R / Shift+R</b></td><td>rotate ±90°</td></tr>
 <tr><td><b>Q / E</b></td><td>rotate ±15° (with Shift ±1°)</td></tr>
@@ -189,7 +192,15 @@ class MainWindow(QMainWindow):
         self.act_select = a("&Select / Move", lambda: self.view.set_tool("select"), "V", "select", checkable=False)
         self.act_measure = a("&Measure", lambda: self.view.set_tool("measure"), "M", "measure")
         self.act_probe = a("Beam &Probe", lambda: self.view.set_tool("probe"), "P", "probe")
-        for act in (self.act_select, self.act_measure, self.act_probe):
+        self.act_combine = a(
+            "&Combine Beams…",
+            lambda: self.view.set_tool("combine"),
+            "C",
+            "combine",
+            tip="Put a beamsplitter where two beams cross so they leave as one beam "
+            "(moves the selected splitter, or adds a pellicle)",
+        )
+        for act in (self.act_select, self.act_measure, self.act_probe, self.act_combine):
             act.setCheckable(True)
             self.tool_group.addAction(act)
         self.act_select.setChecked(True)
@@ -249,7 +260,7 @@ class MainWindow(QMainWindow):
             view.addAction(dock.toggleViewAction())
 
         tools = bar.addMenu("&Tools")
-        tools.addActions([self.act_select, self.act_measure, self.act_probe, self.act_source])
+        tools.addActions([self.act_select, self.act_measure, self.act_probe, self.act_combine, self.act_source])
         tools.addSeparator()
         tools.addAction(self.act_snap)
         clear = tools.addAction("Clear Measurements && Probes")
@@ -269,7 +280,7 @@ class MainWindow(QMainWindow):
         tb.addSeparator()
         tb.addActions([self.act_undo, self.act_redo])
         tb.addSeparator()
-        tb.addActions([self.act_select, self.act_measure, self.act_probe, self.act_source])
+        tb.addActions([self.act_select, self.act_measure, self.act_probe, self.act_combine, self.act_source])
         tb.addSeparator()
         tb.addActions([self.act_rot90, self.act_orient, self.act_duplicate, self.act_delete])
         tb.addSeparator()
@@ -296,9 +307,12 @@ class MainWindow(QMainWindow):
         self.view.cursorMoved.connect(self._update_cursor_status)
         self.view.zoomChanged.connect(lambda ppi: self.zoom_label.setText(f"{ppi:.0f} px/in"))
         self.view.toolChanged.connect(self._on_tool_changed)
+        self.view.hintChanged.connect(self.tool_label.setText)
+        self.view.messageShown.connect(lambda text: self.statusBar().showMessage(text, 8000))
         self.view.contextMenuRequested.connect(self._context_menu)
         self.library.placeRequested.connect(self._place_from_library)
         self.checks.focusRequested.connect(self.focus_components)
+        self.inspector.combineRequested.connect(self._start_combining)
         self.beam_panel.probeFocusRequested.connect(lambda x, y: self.view.center_on_model(x, y))
 
     # ============================================================== status
@@ -322,8 +336,14 @@ class MainWindow(QMainWindow):
         self.issues_button.setStyleSheet("color: #3ecf8e;" if count == 0 else "color: #ff4d5e; font-weight: 600;")
 
     def _on_tool_changed(self, name: str) -> None:
-        self.tool_label.setText({"select": "Select", "measure": "Measure", "probe": "Probe", "place": "Place (Shift-click: keep placing)"}.get(name, name))
-        mapping = {"select": self.act_select, "measure": self.act_measure, "probe": self.act_probe}
+        names = {"select": "Select", "measure": "Measure", "probe": "Probe", "place": "Place (Shift-click: keep placing)"}
+        self.tool_label.setText(self.view.tool.hint or names.get(name, name))
+        mapping = {
+            "select": self.act_select,
+            "measure": self.act_measure,
+            "probe": self.act_probe,
+            "combine": self.act_combine,
+        }
         act = mapping.get(name)
         if act is not None:
             act.setChecked(True)
@@ -421,6 +441,10 @@ class MainWindow(QMainWindow):
         self.view.start_placing(type_id)
         self.view.setFocus()
 
+    def _start_combining(self) -> None:
+        self.view.set_tool("combine")
+        self.view.setFocus()
+
     def _context_menu(self, global_pos, comp_id) -> None:
         self._build_context_menu(comp_id).exec(global_pos)
 
@@ -431,6 +455,9 @@ class MainWindow(QMainWindow):
             comp = self.doc.layout.component(comp_id)
             if comp is not None and comp.type in UNIT_TYPES and has_kb1x1(UNIT_TYPES[comp.type]):
                 menu.addAction(self.act_lift)
+            placed = self.doc.analysis.units.get(comp_id)
+            if placed is not None and splitter_element(placed.build) is not None:
+                menu.addAction(self.act_combine)
             menu.addSeparator()
             menu.addActions([self.act_duplicate, self.act_copy, self.act_cut, self.act_delete])
             self._add_ignore_actions(menu, comp_id)

@@ -24,6 +24,7 @@ from olayout.optics.gaussian import GaussianBeam, aperture_transmission, mirror_
 
 T_MIN = 1e-7  # ignore hits closer than this (inches) to avoid re-hitting a surface
 CLIP_WARN = 0.995  # flag clipping when less than this fraction passes an aperture
+MIN_COS_INCIDENCE = 0.02  # grazing incidence: cap the footprint at 50x the beam
 
 
 @dataclass(frozen=True)
@@ -321,10 +322,12 @@ class BeamTracer:
         n = element.normal
         tan = element.tangent
         offset = float(np.dot(hit - np.asarray(element.center), tan))
-        clip = aperture_transmission(state.tangential.radius, element.half_aperture, offset - element.aperture_offset)
-        state = state.scaled(clip)
         cos_i = abs(float(np.dot(d, n)))
         incidence = math.degrees(math.acos(min(cos_i, 1.0)))
+        # A beam meeting a surface at incidence i lights a strip 1/cos(i) wider than itself.
+        footprint = state.tangential.radius / max(cos_i, MIN_COS_INCIDENCE)
+        clip = aperture_transmission(footprint, element.half_aperture, offset - element.aperture_offset)
+        state = state.scaled(clip)
         kind = element.kind
 
         if kind is OpticKind.BLOCK:

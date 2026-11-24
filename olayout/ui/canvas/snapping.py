@@ -2,8 +2,10 @@
 
 * Hole-mounted units (a PH2 screwed into the table) always land on a hole.
 * Pedestal units and sources move freely; their optic centre snaps onto a
-  nearby beam (so a mirror drops right into an existing beam), otherwise
-  their post axis snaps to a fine grid.  Holding Alt disables snapping.
+  point where two beams cross (where a beamsplitter combines them), else
+  onto a nearby beam (so a mirror drops right into an existing beam),
+  otherwise their post axis snaps to a fine grid.  Holding Alt disables
+  snapping.
 * Measurement points snap to holes, post axes, optic centres and beams.
 """
 
@@ -11,10 +13,11 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from itertools import combinations
 
 import numpy as np
 
-from olayout.catalog.units import Mounting, get_unit_type
+from olayout.catalog.units import UNIT_TYPES, Mounting, get_unit_type
 from olayout.core.geometry import Pose
 from olayout.core.layout import Component
 from olayout.optics.tracer import TraceResult
@@ -27,8 +30,43 @@ SNAP_PX = 12.0  # snap radius in screen pixels
 class SnapResult:
     x: float
     y: float
-    kind: str  # "hole" | "beam" | "grid" | "point" | "free"
+    kind: str  # "hole" | "crossing" | "beam" | "grid" | "point" | "free"
     marker: tuple[float, float] | None = None
+
+
+def nearest_crossing(trace: TraceResult, point, radius: float) -> tuple[float, float] | None:
+    """The closest point within ``radius`` of ``point`` where two beams cross.
+
+    Only real crossings count: a beam meeting the beam it came from (at a
+    mirror or splitter) is not one.
+    """
+    segments = trace.segments
+    if len(segments) < 2:
+        return None
+    p = np.asarray(point, dtype=float)
+    starts = np.array([seg.start for seg in segments])
+    dirs = np.array([seg.direction for seg in segments])
+    lengths = np.array([seg.length for seg in segments])
+    along = np.clip(np.einsum("ij,ij->i", p - starts, dirs), 0.0, lengths)
+    near = np.flatnonzero(np.hypot(*(p - (starts + dirs * along[:, None])).T) <= radius)
+    best: tuple[float, tuple[float, float]] | None = None
+    for i, j in combinations(near, 2):
+        a, b = segments[i], segments[j]
+        if a.parent == b.index or b.parent == a.index or (a.parent is not None and a.parent == b.parent):
+            continue
+        det = dirs[i][0] * dirs[j][1] - dirs[i][1] * dirs[j][0]
+        if abs(det) < 1e-6:
+            continue
+        w = starts[j] - starts[i]
+        t = (w[0] * dirs[j][1] - w[1] * dirs[j][0]) / det
+        u = (w[0] * dirs[i][1] - w[1] * dirs[i][0]) / det
+        if not (0.0 <= t <= lengths[i] and 0.0 <= u <= lengths[j]):
+            continue
+        q = starts[i] + t * dirs[i]
+        distance = float(np.hypot(*(q - p)))
+        if distance <= radius and (best is None or distance < best[0]):
+            best = (distance, (float(q[0]), float(q[1])))
+    return None if best is None else best[1]
 
 
 @dataclass
@@ -74,6 +112,10 @@ class Snapper:
         offset = self.optic_offset(comp)
         if beams is not None and beams.segments and offset is not None:
             center = Pose(raw_x, raw_y, comp.angle).apply(offset)
+            crossing = nearest_crossing(beams, center, SNAP_PX / scale)
+            if crossing is not None:
+                (cx, cy), (ox, oy) = crossing, center
+                return SnapResult(raw_x + cx - ox, raw_y + cy - oy, "crossing", crossing)
             hit = beams.nearest(center, SNAP_PX / scale)
             if hit is not None:
                 seg, s, _ = hit
@@ -101,6 +143,9 @@ class Snapper:
         candidates.append((math.hypot(hx - raw_x, hy - raw_y), "hole", hx, hy))
         for comp in self.doc.layout.components:
             candidates.append((math.hypot(comp.x - raw_x, comp.y - raw_y), "point", comp.x, comp.y))
+            end = member_end(comp)
+            if end is not None:  # the far end of a rail or board
+                candidates.append((math.hypot(end[0] - raw_x, end[1] - raw_y), "point", *end))
             placed = self.doc.analysis.units.get(comp.id)
             if placed is not None:
                 for element in placed.build.elements:
@@ -115,6 +160,46 @@ class Snapper:
             px, py = seg.point_at(s)
             return SnapResult(px, py, "beam", (px, py))
         return SnapResult(raw_x, raw_y, "free")
+
+
+def member_end(comp: Component) -> tuple[float, float] | None:
+    """World position of the far end of a straight member (a rail, a board)."""
+    unit = UNIT_TYPES.get(comp.type)
+    length = unit.member_length(comp.params) if unit is not None else None
+    if length is None:
+        return None
+    x, y = comp.pose.apply((length, 0.0))
+    return float(x), float(y)
+
+
+class MemberSnapper:
+    """Where the ends of a rail or board being drawn go: onto holes and the
+    ends of other members, else onto a 1/8" grid (the far end: at 15° steps
+    from the first, its length in 1/8" steps)."""
+
+    GRID = 0.125
+
+    def __init__(self, snapper: Snapper):
+        self.snapper = snapper
+
+    def start(self, raw_x: float, raw_y: float, scale: float, disabled: bool) -> SnapResult:
+        snap = self.snapper.point(raw_x, raw_y, scale, disabled)
+        if snap.kind in ("hole", "point") or disabled:
+            return snap
+        g = self.GRID
+        return SnapResult(round(raw_x / g) * g, round(raw_y / g) * g, "grid")
+
+    def end(self, start: tuple[float, float], raw_x: float, raw_y: float, scale: float, disabled: bool,
+            free_angle: bool) -> SnapResult:
+        snap = self.snapper.point(raw_x, raw_y, scale, disabled)
+        if snap.kind in ("hole", "point") or disabled:
+            return snap
+        dx, dy = raw_x - start[0], raw_y - start[1]
+        length = round(math.hypot(dx, dy) / self.GRID) * self.GRID
+        angle = math.atan2(dy, dx)
+        if not free_angle:
+            angle = math.radians(round(math.degrees(angle) / 15.0) * 15.0)
+        return SnapResult(start[0] + length * math.cos(angle), start[1] + length * math.sin(angle), "grid")
 
 
 def constrain_angle(ax: float, ay: float, bx: float, by: float, step_deg: float = 45.0) -> tuple[float, float]:

@@ -9,6 +9,7 @@ primitive model, rendered once and then reused from ``.cache/sprites``.
 from __future__ import annotations
 
 import logging
+from collections import OrderedDict
 from dataclasses import dataclass
 
 import numpy as np
@@ -18,7 +19,7 @@ from PySide6.QtGui import QImage, QPixmap
 from olayout import paths
 from olayout.catalog.units import PlacedPart
 from olayout.render.cad_sprites import CadSprites
-from olayout.render.sprites import Sprite, SpriteCache
+from olayout.render.sprites import Sprite, SpriteCache, can_stretch, stretch_sprite
 
 log = logging.getLogger(__name__)
 
@@ -58,11 +59,13 @@ class SpriteStore:
     """Process-wide cache: rendered once, then reused by every item."""
 
     _instance: SpriteStore | None = None
+    STRETCHED_LIMIT = 64  # stretched sprites kept (each length is one; drawing a rail tries many)
 
     def __init__(self) -> None:
         self._cad = CadSprites(paths.BAKED_SPRITES_DIR)
         self._cache = SpriteCache(paths.sprite_cache_dir())
         self._qt: dict[tuple, QtSprite] = {}
+        self._stretched: OrderedDict[tuple, QtSprite] = OrderedDict()  # least recently used first
 
     @classmethod
     def instance(cls) -> SpriteStore:
@@ -76,6 +79,16 @@ class SpriteStore:
 
     def get(self, part: PlacedPart) -> QtSprite:
         key = (part.part_id, part.prims, part.roll, part.z_offset)
+        if part.stretch is not None:
+            sprite = self._stretched.get(key)
+            if sprite is None:
+                sprite = _to_qt(self._render(part))
+                self._stretched[key] = sprite
+                if len(self._stretched) > self.STRETCHED_LIMIT:
+                    self._stretched.popitem(last=False)
+            else:
+                self._stretched.move_to_end(key)
+            return sprite
         sprite = self._qt.get(key)
         if sprite is None:
             sprite = _to_qt(self._render(part))
@@ -84,4 +97,11 @@ class SpriteStore:
 
     def _render(self, part: PlacedPart) -> Sprite:
         sprite = self._cad.get(part.part_id, part.roll, part.z_offset)
-        return sprite if sprite is not None else self._cache.get(part.sprite_name, part.prims)
+        if sprite is not None:
+            return sprite
+        stretch = part.stretch
+        if stretch is not None and can_stretch(stretch.template_span, stretch.span):
+            # The template's sprite is rendered (and cached on disk) once for every length.
+            template = self._cache.get(f"{part.part_id}-template", stretch.template)
+            return stretch_sprite(template, stretch.template_span, stretch.span)
+        return self._cache.get(part.sprite_name, part.prims)

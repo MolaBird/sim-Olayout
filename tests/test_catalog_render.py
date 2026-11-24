@@ -35,7 +35,7 @@ def test_unit_builds_with_defaults(type_id):
             assert placed.footprints[Layer.BASE].area > 0
         if type_id != "base":
             assert placed.footprints[Layer.OPTIC].area > 0
-            assert placed.build.elements
+            assert placed.build.blockers if unit.structural else placed.build.elements  # framing stops beams
 
 
 def test_mount_bore_is_open_at_beam_height():
@@ -64,3 +64,25 @@ def test_sprite_render_and_disk_cache(tmp_path):
     reloaded = SpriteCache(tmp_path, ppi=60).get("KM100", prims)
     assert np.array_equal(first.rgba, reloaded.rgba)
     assert reloaded.x0 == pytest.approx(first.x0)
+
+
+@pytest.mark.parametrize("make", ["rail", "rod"])
+def test_stretched_sprite_matches_a_full_render(make):
+    """Uniform parts are drawn from a 1" piece stretched to length: pixel for pixel the same."""
+    from olayout.catalog import parts as P
+    from olayout.catalog.primitives import transform_all
+    from olayout.render.sprites import stretch_sprite
+
+    if make == "rail":  # runs from its origin
+        def prims(length):
+            return P.tslot_rail_prims(length, 0.0)
+        template_span, span = (0.0, 1.0), (0.0, 3.5)
+    else:  # a cage rod is centred on its origin
+        def prims(length):
+            return transform_all(P.cage_rod_prims(length), np.eye(3), (0.0, 0.0, 0.59))
+        template_span, span = (-0.5, 0.5), (-1.75, 1.75)
+    full = render_sprite(prims(span[1] - span[0]), ppi=100)
+    stretched = stretch_sprite(render_sprite(prims(1.0), ppi=100), template_span, span)
+    assert stretched.rgba.shape == full.rgba.shape and stretched.x0 == pytest.approx(full.x0)
+    assert np.abs(stretched.rgba.astype(int) - full.rgba.astype(int)).max() <= 1
+    assert np.abs(stretched.shadow - full.shadow).max() < 1e-3

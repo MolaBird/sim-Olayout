@@ -325,6 +325,48 @@ def make_bp108() -> PartSpec:
     )
 
 
+# ==========================================================================
+# KMSR compact kinematic mount for 1"-tall rectangular optics (STEP)
+# ==========================================================================
+# Measured on the vendor STEP file: a 1.00"-wide back plate carrying the
+# 8-32 tap (under the optic, mid-plate) and two hex adjusters, springs, then
+# a "["-shaped holder whose top and bottom lips grip the 1"-tall optic
+# against its solid back wall (a mirror mount: nothing passes through).  A
+# nylon-tipped setscrew in the top lip holds the optic.  Its second 8-32 tap,
+# in the back face on the optic axis, would point the mirror at the ceiling,
+# so it is not offered.
+KMSR_BACK = ((-0.140, 0.140), (-0.625, 0.500))  # back plate: x, z (1.00" wide)
+KMSR_HOLDER = ((0.227, 0.427), (-0.590, 0.680))  # holder back wall: x, z
+KMSR_LIPS = (((-0.590, -0.500), 0.673, 0.441), ((0.500, 0.680), 0.697, 0.416))  # (z range, front x, half width)
+KMSR_KNOBS = ((0.340, 0.340), (-0.340, -0.340))  # (y, z) of the two hex adjusters
+KMSR_KNOB_BACK = -0.281  # how far behind the post axis they reach
+SQUARE_OPTIC_SIZE = 1.0  # PFSQ10-03-P01: 1" x 1" x 6 mm
+
+
+def make_kmsr() -> PartSpec:
+    (bx0, bx1), (bz0, bz1) = KMSR_BACK
+    (hx0, hx1), (hz0, hz1) = KMSR_HOLDER
+    prims: list[Primitive] = [
+        Box((bx0, -0.5, bz0), (bx1, 0.5, bz1), "anodized_light"),
+        Box((bx1 - 0.01, -0.30, -0.30), (hx0 + 0.01, 0.30, 0.30), "anodized"),  # springs and pivot, one body
+        Box((hx0, -0.5, hz0), (hx1, 0.5, hz1), "anodized"),
+    ]
+    for (z0, z1), front, half_w in KMSR_LIPS:
+        prims.append(Box((hx1, -half_w, z0), (front, half_w, z1), "anodized"))
+    prims.append(Cylinder("z", (0.549, 0.0, KMSR_LIPS[1][0][1] + 0.02), 0.04, 0.04, "steel_dark"))  # optic setscrew
+    for y, z in KMSR_KNOBS:
+        prims.append(Cylinder("x", ((KMSR_KNOB_BACK + bx0) / 2, y, z), 0.121, bx0 - KMSR_KNOB_BACK, "steel_dark"))
+    return PartSpec(
+        id="KMSR",
+        name='KMSR compact kinematic mount, 1" tall rectangular optics',
+        layer=Layer.OPTIC,
+        prims=tuple(prims),
+        taps=(MountingTap("bottom", "Upright (bottom tap)", (0.0, 0.0, bz0), (0, 0, -1)),),
+        optic_slot=OpticSlot(seat_x=hx1, loading="front", diameter=SQUARE_OPTIC_SIZE, clear_aperture=0.90),
+        description='Compact kinematic mount for 1"-tall rectangular optics over 3 mm thick; 8-32 tap under the optic.',
+    )
+
+
 def make_fmp1() -> PartSpec:
     """1.24 W x 1.57 H x 0.25 thick; optic 0.87" above the bottom; tap under the optic."""
     half_t = 0.125
@@ -410,6 +452,69 @@ def make_cp35() -> PartSpec:
         taps=taps,
         optic_slot=OpticSlot(seat_x=-t / 2, loading="centered", clear_aperture=0.90),
         description="30 mm cage plate with a Ø1\" double bore and 8-32 tap.",
+    )
+
+
+# ==========================================================================
+# Reflective objective in a cage plate: CP35 + M1RMSS + LMM40X-P01
+# ==========================================================================
+RMS_RADIUS = 0.400  # RMS objective thread, 0.800"-36
+M1RMSS_LENGTH = 10.0 / 25.4  # STEP: a plain brass ring, 10 mm long
+M1RMSS_RADII = (0.769 / 2, 1.031 / 2)  # STEP: RMS bore, SM1 outside
+
+
+def make_m1rmss() -> PartSpec:
+    """M1RMSS brass adapter: external SM1 thread (into the cage plate), internal
+    RMS thread for the objective.  Origin: on the axis at its front face, where
+    the objective's shoulder seats; +x toward the objective."""
+    inner, outer = M1RMSS_RADII
+    length = M1RMSS_LENGTH
+    prims = (
+        Cylinder("x", (-length / 2, 0.0, 0.0), outer, length, "brass"),
+        Bore("x", (-length / 2, 0.0, 0.0), inner, length + 0.02),
+    )
+    return PartSpec(
+        id="M1RMSS",
+        name="M1RMSS brass adapter, external SM1 to internal RMS",
+        layer=Layer.OPTIC,
+        prims=prims,
+        description="Brass microscope adapter ring: external SM1 threads, internal RMS threads, 10 mm long.",
+    )
+
+
+# LMM40X-P01: 40X reflective (two-mirror Schwarzschild) objective, protected
+# silver, NA 0.50, infinity corrected.  Optics from the Thorlabs specs; the
+# housing measured on the vendor STEP file, whose origin is the focus.
+LMM40X_EFL_MM = 5.0
+LMM40X_WD_MM = 7.8  # working distance: nose to focus
+LMM40X_PUPIL_MM = 5.1  # entrance pupil diameter (= 2 NA f)
+LMM40X_THREAD = 0.185  # RMS thread behind the shoulder
+LMM40X_COLLAR = (0.047, 0.4626)  # collar in front of the shoulder: length, radius
+LMM40X_BODY = (0.0866, 0.854, 0.5906)  # Ø30 mm housing: from, to, radius
+LMM40X_NOSE = 0.874  # shoulder to nose (focus: + the working distance)
+LMM40X_PATH_RADIUS = 0.14  # the light path through the housing, simplified to an axial bore
+
+
+def make_lmm40x() -> PartSpec:
+    """Origin: on the axis at the shoulder that seats on the adapter; +x toward
+    the sample.  The RMS thread sticks out behind the shoulder."""
+    collar, collar_r = LMM40X_COLLAR
+    body0, body1, radius = LMM40X_BODY
+    nose = LMM40X_NOSE
+    prims = (
+        Cylinder("x", (-LMM40X_THREAD / 2, 0.0, 0.0), RMS_RADIUS, LMM40X_THREAD, "anodized"),
+        Cylinder("x", (collar / 2, 0.0, 0.0), collar_r, collar, "anodized"),
+        Cylinder("x", ((collar + body0) / 2, 0.0, 0.0), (collar_r + radius) / 2, body0 - collar, "anodized"),
+        Cylinder("x", ((body0 + body1) / 2, 0.0, 0.0), radius, body1 - body0, "anodized"),
+        Cylinder("x", ((body1 + nose) / 2, 0.0, 0.0), radius - 0.02, nose - body1, "anodized"),
+        Bore("x", (nose / 2, 0.0, 0.0), LMM40X_PATH_RADIUS, nose + 2 * LMM40X_THREAD),
+    )
+    return PartSpec(
+        id="LMM40X",
+        name="LMM40X-P01 40X reflective objective, NA 0.50",
+        layer=Layer.OPTIC,
+        prims=prims,
+        description="Infinity-corrected 40X reflective objective, protected silver; EFL 5 mm, WD 7.8 mm, RMS thread.",
     )
 
 
@@ -731,6 +836,271 @@ def make_fork_screw() -> PartSpec:
 
 
 # ==========================================================================
+# Enclosure framing: 1/2" T-slot extrusion and boards
+# ==========================================================================
+# A generic 1/2" x 1/2" four-slot extrusion (80/20's own "1/2"" profile,
+# 1050, is 1" x 1/2"); the slot sizes are estimates.  Straight members run
+# along +x from their origin, centred on the x axis, so a rail and the board
+# in its slot share one line.  How high a member sits decides what it meets:
+# beams only cross z = 0 (the beam plane).
+TSLOT_SIZE = 0.5
+TSLOT_OPENING = 0.13  # estimate: slot opening
+TSLOT_NECK = 0.04  # estimate: depth of the opening, before the slot widens
+TSLOT_CHAMBER = (0.22, 0.08)  # estimate: width and depth of the wider slot behind it
+TSLOT_BORE = 0.06  # estimate: radius of the centre bore (tapped for end screws)
+POST_Z = (-1.0, 1.5)  # a post (or board) reaches from below the beam plane to above it (drawn height)
+BOARD_THICKNESS = 0.125  # 1/8" hardboard fits the slot
+
+
+def tslot_profile() -> tuple[tuple[float, float], ...]:
+    """End view of the extrusion: a square with a T-slot in the middle of each side."""
+    h, half_open = TSLOT_SIZE / 2, TSLOT_OPENING / 2
+    half_chamber, chamber_depth = TSLOT_CHAMBER[0] / 2, TSLOT_CHAMBER[1]
+    neck, floor = -h + TSLOT_NECK, -h + TSLOT_NECK + chamber_depth
+    side = [  # the bottom side (y = -h), walked toward +x; the other sides are this, turned
+        (-h, -h), (-half_open, -h), (-half_open, neck), (-half_chamber, neck), (-half_chamber, floor),
+        (half_chamber, floor), (half_chamber, neck), (half_open, neck), (half_open, -h),
+    ]
+    points = []
+    for turn in range(4):
+        c, s = round(math.cos(turn * math.pi / 2)), round(math.sin(turn * math.pi / 2))
+        points += [(c * x - s * y, s * x + c * y) for x, y in side]
+    return tuple((float(x), float(y)) for x, y in points)
+
+
+def _circle(radius: float, segments: int = 16) -> tuple[tuple[float, float], ...]:
+    return tuple(
+        (radius * math.cos(2 * math.pi * k / segments), radius * math.sin(2 * math.pi * k / segments))
+        for k in range(segments)
+    )
+
+
+def tslot_rail_prims(length: float, z_centre: float) -> tuple[Primitive, ...]:
+    """A horizontal rail along x seen from above: its top face, with the slot
+    running down the middle (lit lands either side, a shadowed groove)."""
+    h, half_open = TSLOT_SIZE / 2, TSLOT_OPENING / 2
+    top = z_centre + h
+    floor = top - TSLOT_NECK - TSLOT_CHAMBER[1]
+    return (
+        Box((0.0, -h, z_centre - h), (length, h, floor), "aluminum"),
+        Box((0.0, -h, floor), (length, -half_open, top), "aluminum"),
+        Box((0.0, half_open, floor), (length, h, top), "aluminum"),
+    )
+
+
+def make_tslot_rail() -> PartSpec:
+    """1/2" T-slot rail (shown 1" long; units build their own length)."""
+    return PartSpec(
+        id="TSLOT-RAIL",
+        name='1/2" T-slot rail',
+        layer=Layer.OPTIC,
+        prims=tslot_rail_prims(1.0, 0.0),
+        description='1/2" x 1/2" four-slot aluminium extrusion, lying horizontally.',
+    )
+
+
+def make_tslot_post() -> PartSpec:
+    """1/2" T-slot post standing upright: seen end-on, origin on its axis."""
+    prism = Prism(tslot_profile(), POST_Z[0], POST_Z[1], "aluminum", holes=(_circle(TSLOT_BORE),))
+    return PartSpec(
+        id="TSLOT-POST",
+        name='1/2" T-slot post',
+        layer=Layer.OPTIC,
+        prims=(prism,),
+        description='1/2" x 1/2" four-slot aluminium extrusion, standing upright.',
+    )
+
+
+def board_prims(length: float, thickness: float) -> tuple[Primitive, ...]:
+    """An enclosure board standing on edge along x, centred on the x axis."""
+    return (Box((0.0, -thickness / 2, POST_Z[0]), (length, thickness / 2, POST_Z[1]), "board"),)
+
+
+def make_board() -> PartSpec:
+    return PartSpec(
+        id="BOARD",
+        name="Enclosure board",
+        layer=Layer.OPTIC,
+        prims=board_prims(1.0, BOARD_THICKNESS),
+        description="Opaque panel standing on edge, e.g. 1/8\" black hardboard in the T-slots.",
+    )
+
+
+# ==========================================================================
+# MAX311D NanoMax 3-axis flexure stage (STEP)
+# ==========================================================================
+# Measured on the vendor STEP file (CAD mm, z up, the table at z = 0).  The
+# base's counterbored holes sit on a 12.6 mm pitch made to fit both 1" and
+# 25 mm grids.  The part origin is the 1" grid point they fit best, 0.8 mm
+# from the base centre: with it on a breadboard hole, five of them land
+# within 0.4 mm of holes.  x, y as in the file: the X drive points +x, the Y
+# and Z drives +y; the 60 mm sample platform sits on the base's -x, -y corner.
+MAX311D_ANCHOR_MM = (-59.3, 41.22)
+MAX311D_PLATFORM_MM = ((-114.5, -54.5), (-13.98, 46.02), (58.5, 62.5))  # x, y, z
+MAX311D_TRAVEL_MM = 4.0  # per axis (Thorlabs)
+
+
+def _max311d_in(x_mm: float, y_mm: float) -> tuple[float, float]:
+    """CAD mm -> part-frame inches."""
+    ax, ay = MAX311D_ANCHOR_MM
+    return (x_mm - ax) / 25.4, (y_mm - ay) / 25.4
+
+
+def _max311d_box(x_mm, y_mm, z_mm, material: str) -> Box:
+    (x0, y0), (x1, y1) = _max311d_in(x_mm[0], y_mm[0]), _max311d_in(x_mm[1], y_mm[1])
+    return Box((x0, y0, z_mm[0] / 25.4), (x1, y1, z_mm[1] / 25.4), material)
+
+
+def _max311d_drive(axis: str, across_mm: float, z_mm: float, start_mm: float, end_mm: float) -> list[Primitive]:
+    """A differential micrometer along +axis: lock ring, barrel, then the thimble."""
+    sections = ((start_mm, start_mm + 24.0, 12.5, "anodized"), (start_mm + 24.0, start_mm + 36.0, 7.5, "steel"),
+                (start_mm + 36.0, end_mm, 10.3, "knob"))
+    prims: list[Primitive] = []
+    for a0, a1, radius_mm, material in sections:
+        mid = (a0 + a1) / 2
+        x, y = _max311d_in(mid, across_mm) if axis == "x" else _max311d_in(across_mm, mid)
+        prims.append(Cylinder(axis, (x, y, z_mm / 25.4), radius_mm / 25.4, (a1 - a0) / 25.4, material,
+                              knurled=material == "knob"))
+    return prims
+
+
+def max311d_face_centre(face: str) -> tuple[float, float]:
+    """Centre of the platform face a sample faces out of (part frame, inches):
+    ``"x"``: the -x face, away from the X drive; ``"y"``: the -y face."""
+    (x0, x1), (y0, y1), _ = MAX311D_PLATFORM_MM
+    return _max311d_in(x0, (y0 + y1) / 2) if face == "x" else _max311d_in((x0 + x1) / 2, y0)
+
+
+def make_max311d() -> PartSpec:
+    platform_x, platform_y, platform_z = MAX311D_PLATFORM_MM
+    prims: list[Primitive] = [
+        _max311d_box((-114.5, -2.5), (-13.98, 98.02), (0.0, 7.0), "anodized"),  # base plate
+        _max311d_box((-114.5, -27.5), (-13.98, 73.0), (7.0, 55.5), "anodized"),  # flexure body
+        _max311d_box((-107.5, -61.5), (-7.0, 39.0), (55.5, platform_z[0]), "anodized_light"),
+        _max311d_box(platform_x, platform_y, platform_z, "anodized_light"),  # sample platform
+        *_max311d_drive("y", -103.5, 30.0, 70.0, 147.17),
+        *_max311d_drive("y", -58.0, 30.0, 70.0, 147.17),
+        *_max311d_drive("x", 7.02, 42.0, -30.0, 43.65),
+    ]
+    return PartSpec(
+        id="MAX311D",
+        name="MAX311D NanoMax 3-axis flexure stage",
+        layer=Layer.BASE,
+        prims=tuple(prims),
+        description="3-axis flexure stage, 4 mm travel per axis, differential drives and closed-loop piezos.",
+    )
+
+
+def sample_prims(width: float, thickness: float) -> tuple[Primitive, ...]:
+    """A square sample standing at beam height; origin at its front surface, facing +x."""
+    return (Box((-thickness, -width / 2, -width / 2), (0.0, width / 2, width / 2), "label"),)
+
+
+def make_sample() -> PartSpec:
+    return PartSpec(
+        id="SAMPLE",
+        name="Sample",
+        layer=Layer.OPTIC,
+        prims=sample_prims(1.0, 1.0 / 25.4),
+        optic_slot=OpticSlot(seat_x=0.0, loading="rear", diameter=1.0, clear_aperture=1.0),
+        description="A sample whose front surface faces +x.",
+    )
+
+
+# ==========================================================================
+# MRAK25-P01 knife-edge prism mirror on a KM100B kinematic platform mount
+# ==========================================================================
+# A right-angle N-BK7 prism whose two 25 mm legs are silvered on the outside
+# and meet in a bevel-free 90° edge.  Two beams arriving from opposite sides,
+# square to the output, leave side by side as close together as their own
+# sizes allow: the edge itself wastes no aperture.  Thorlabs shows it on a
+# KM100B kinematic platform mount (1.92" square platform).  No vendor CAD is
+# registered for either: the prism is drawn from its catalog dimensions, the
+# KM100B is simplified and its thicknesses are estimates.
+#
+# Part frames: origin on the knife edge at beam height (the KM100B's tap is
+# under it); +x is the direction the reflected beams leave, the way the edge
+# points; the prism lies behind the edge, its legs at ±45°.
+MRAK25_LEG = 25.0 / 25.4
+MRAK25_HEIGHT = 25.0 / 25.4  # estimate: a 25 mm cube cut along its diagonal
+KM100B_PLATFORM = 1.92
+KM100B_PLATFORM_T = 0.25  # estimate
+KM100B_GAP = 0.10  # estimate: springs between the platform and the fixed plate
+KM100B_BASE_T = 0.35  # estimate
+
+
+def mrak25_outline() -> tuple[tuple[float, float], ...]:
+    """The prism seen from above (part frame): the knife edge, then the far ends of its two legs."""
+    r = MRAK25_LEG / math.sqrt(2)
+    return ((0.0, 0.0), (-r, r), (-r, -r))
+
+
+def make_mrak25() -> PartSpec:
+    half = MRAK25_HEIGHT / 2
+    return PartSpec(
+        id="MRAK25",
+        name="MRAK25-P01 knife-edge right-angle prism mirror, 25 mm",
+        layer=Layer.OPTIC,
+        prims=(Prism(mrak25_outline(), -half, half, "glass"),),
+        description="N-BK7 right-angle prism, protected silver on both 25 mm legs, bevel-free 90° knife edge.",
+    )
+
+
+def make_km100b() -> PartSpec:
+    """Kinematic platform: a square platform on springs over a fixed plate with
+    the 8-32 tap, tipped and tilted by two 1/4"-80 adjusters at the back."""
+    half = KM100B_PLATFORM / 2
+    top = -MRAK25_HEIGHT / 2  # the prism stands on the platform
+    platform_bottom = top - KM100B_PLATFORM_T
+    base_top = platform_bottom - KM100B_GAP
+    base_bottom = base_top - KM100B_BASE_T
+    knob_z = (base_top + base_bottom) / 2
+    prims: list[Primitive] = [
+        Box((-half, -half, platform_bottom), (half, half, top), "anodized"),
+        Box((-0.30, -0.30, base_top - 0.01), (0.30, 0.30, platform_bottom + 0.01), "anodized"),  # springs, pivot
+        Box((-half, -half, base_bottom), (half, half, base_top), "anodized_light"),
+    ]
+    for y in (0.62, -0.62):
+        prims += _adjuster(y, knob_z, -half)
+    return PartSpec(
+        id="KM100B",
+        name='KM100B kinematic platform mount, 1.92" x 1.92"',
+        layer=Layer.OPTIC,
+        prims=tuple(prims),
+        taps=(MountingTap("bottom", "Upright (bottom tap)", (0.0, 0.0, base_bottom), (0, 0, -1)),),
+        description="Kinematic platform mount for prisms and rectangular optics, ±4° tip and tilt, 8-32 tap.",
+    )
+
+
+# ==========================================================================
+# ID25 iris diaphragm (catalog dimensions; no vendor CAD registered)
+# ==========================================================================
+# Part frame: origin at the centre of the opening, at beam height; the beam
+# runs along x through the housing, which stands in the y-z plane.
+ID25_RADIUS = 43.69 / 25.4 / 2  # Ø43.7 mm housing
+ID25_THICKNESS = 6.6 / 25.4
+ID25_APERTURE_MM = (1.0, 25.0)  # the blades close from Ø25 mm down to Ø1 mm
+ID25_OPENING = ID25_APERTURE_MM[1] / 25.4 / 2  # radius of the housing's own bore
+
+
+def make_id25() -> PartSpec:
+    r, t = ID25_RADIUS, ID25_THICKNESS
+    prims = (
+        Cylinder("x", (0.0, 0.0, 0.0), r, t, "anodized"),
+        Bore("x", (0.0, 0.0, 0.0), ID25_OPENING, t + 0.1),
+        Cylinder("z", (0.0, 0.42, r - 0.05), 0.05, 0.30, "steel_dark"),  # the lever, on the rim
+    )
+    return PartSpec(
+        id="ID25",
+        name="ID25 iris diaphragm, Ø1–25 mm",
+        layer=Layer.OPTIC,
+        prims=prims,
+        taps=(MountingTap("bottom", "Upright (bottom tap)", (0.0, 0.0, -r), (0, 0, -1)),),
+        description="Mounted iris, Ø1 mm to Ø25 mm aperture, 8-32 tap for a Ø1/2\" post.",
+    )
+
+
+# ==========================================================================
 # Registry
 # ==========================================================================
 def _build_registry() -> dict[str, PartSpec]:
@@ -739,10 +1109,13 @@ def _build_registry() -> dict[str, PartSpec]:
         make_km100cp(),
         make_km100bp(),
         make_bp108(),
+        make_kmsr(),
         make_fmp1(),
         make_kb1x1(),
         make_kb1x1_bottom(),
         make_cp35(),
+        make_m1rmss(),
+        make_lmm40x(),
         make_sm1zb(),
         make_fiber_connector(),
         make_cage_rod(),
@@ -752,6 +1125,14 @@ def _build_registry() -> dict[str, PartSpec]:
         make_be1(),
         make_cf125c(),
         make_fork_screw(),
+        make_tslot_rail(),
+        make_tslot_post(),
+        make_board(),
+        make_max311d(),
+        make_sample(),
+        make_mrak25(),
+        make_km100b(),
+        make_id25(),
     ]
     return {part.id: part for part in parts}
 

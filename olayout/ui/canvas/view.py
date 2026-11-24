@@ -10,7 +10,7 @@ from PySide6.QtWidgets import QFrame, QGraphicsView
 
 from olayout.ui.canvas.scene import LayoutScene
 from olayout.ui.canvas.snapping import SnapSettings, Snapper
-from olayout.ui.canvas.tools import MeasureTool, PlaceTool, ProbeTool, SelectTool, Tool
+from olayout.ui.canvas.tools import CombineTool, MeasureTool, PlaceTool, ProbeTool, SelectTool, Tool
 from olayout.ui.document import LayoutDocument
 
 UNIT_MIME = "application/x-olayout-unit"
@@ -25,6 +25,8 @@ class LayoutView(QGraphicsView):
     cursorMoved = Signal(float, float)  # model coordinates, inches
     zoomChanged = Signal(float)  # pixels per inch
     toolChanged = Signal(str)
+    hintChanged = Signal(str)  # what the active tool expects next
+    messageShown = Signal(str)  # a transient outcome, e.g. of the combine tool
     contextMenuRequested = Signal(QPoint, object)  # global position, component id or None
 
     def __init__(self, doc: LayoutDocument, parent=None):
@@ -73,10 +75,18 @@ class LayoutView(QGraphicsView):
         self.tool.deactivate()
         if name == "place" and type_id is not None:
             self.tool = PlaceTool(self, type_id, angle)
+        elif name == "combine":
+            self.tool = CombineTool(self)  # works on the current selection
         else:
             self.tool = self.tools.get(name, self.tools["select"])
         self.tool.activate()
         self.toolChanged.emit(self.tool.name)
+
+    def show_hint(self, text: str) -> None:
+        self.hintChanged.emit(text)
+
+    def notify(self, text: str) -> None:
+        self.messageShown.emit(text)
 
     def start_placing(self, type_id: str) -> None:
         self.set_tool("place", type_id=type_id)
@@ -212,6 +222,8 @@ class LayoutView(QGraphicsView):
             self._pan_origin = None
             self._pan_button = None
             self.tool.activate()
+            if was_click and self.tool.context_click():
+                return
             if was_click:
                 scene_pos, _, _ = self.model_pos(ev.position().toPoint())
                 comp_id = self.layout_scene.component_at(scene_pos)

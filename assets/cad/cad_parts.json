@@ -41,6 +41,34 @@
     "hide_above_mm": -6.2,
     "material": "anodized_light"
   },
+  "KMSR": {
+    "_note": "origin: optic axis (centred between the holder's lips) above the bottom 8-32 tap, mid back plate",
+    "file": "KMSR-Step.step",
+    "axes": ["z", "x", "y"],
+    "origin_mm": [-65.053, 41.89, 69.965],
+    "material": "anodized"
+  },
+  "M1RMSS": {
+    "_note": "plain 10 mm ring along CAD y; origin: axis at the face the objective's shoulder seats on",
+    "file": "M1RMSS-Step.step",
+    "axes": ["y", "-x", "z"],
+    "origin_mm": [674.9165, 876.808, 1282.0445],
+    "material": "brass"
+  },
+  "LMM40X": {
+    "_note": "the file's origin is the focus, 7.76 mm in front of the nose; origin here: the shoulder where the RMS thread ends",
+    "file": "LMM40X-P01-Step.step",
+    "axes": ["z", "x", "y"],
+    "origin_mm": [0.0, 0.0, -29.957],
+    "material": "anodized"
+  },
+  "MAX311D": {
+    "_note": "z up, table at z = 0; origin: the 1in grid point the base's counterbored holes fit best (0.8 mm from the base centre)",
+    "file": "MAX311D-Step.step",
+    "axes": ["x", "y", "z"],
+    "origin_mm": [-59.3, 41.22, 0.0],
+    "material": "anodized"
+  },
   "CP35": {
     "_note": "origin: optic axis on the front face",
     "file": "CP35-Step.step",

@@ -145,6 +145,42 @@
       "source_sha1": "0bce64b20c9c67801ac9ee760282d7015fc5bb28",
       "renderer": "render v3, mesh v1, 200 ppi, x2, margin 0.12\", material anodized"
     },
+    "KMSR-c0f14e8c08d9": {
+      "part": "KMSR",
+      "x0": -0.401124,
+      "y1": 0.620011,
+      "ppi": 200.0,
+      "z_top": 0.679973,
+      "source_sha1": "fc405a4ef110e1a91af807f00f64005b7271b5c5",
+      "renderer": "render v3, mesh v1, 200 ppi, x2, margin 0.12\", material anodized"
+    },
+    "LMM40X-1a42011f124a": {
+      "part": "LMM40X",
+      "x0": -0.305039,
+      "y1": 0.710551,
+      "ppi": 200.0,
+      "z_top": 0.590551,
+      "source_sha1": "42940839040ae6a4b221da8d6019010ae43488b4",
+      "renderer": "render v3, mesh v1, 200 ppi, x2, margin 0.12\", material anodized"
+    },
+    "M1RMSS-011d9ac3879f": {
+      "part": "M1RMSS",
+      "x0": -0.513985,
+      "y1": 0.635615,
+      "ppi": 200.0,
+      "z_top": 0.515666,
+      "source_sha1": "619d6caad1783ea5adddf3009e1ea4fdc8ca003a",
+      "renderer": "render v3, mesh v1, 200 ppi, x2, margin 0.12\", material brass"
+    },
+    "MAX311D-ad588dd30522": {
+      "part": "MAX311D",
+      "x0": -2.351813,
+      "y1": 4.291367,
+      "ppi": 200.0,
+      "z_top": 2.480315,
+      "source_sha1": "8402ad3d8378eba41e5c5350853e4282a9bb8fc6",
+      "renderer": "render v3, mesh v1, 200 ppi, x2, margin 0.12\", material anodized"
+    },
     "PH2-bf2d7e833d70": {
       "part": "PH2",
       "x0": -0.612126,

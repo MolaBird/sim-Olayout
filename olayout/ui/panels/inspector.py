@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 
 import numpy as np
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -32,8 +32,13 @@ from olayout.core.breadboard import PRESETS, Breadboard
 from olayout.core.geometry import point_segment_distance
 from olayout.core.layout import Component
 from olayout.core.units import format_beam_size, normalize_angle
+from olayout.engine.combine import splitter_element
 from olayout.optics.elements import OpticKind
 from olayout.ui.document import LayoutDocument
+
+# A beam this close to an optic's edge (in beam radii, across the beam) gets its margin listed;
+# at 1.3 w it loses 0.5%.
+EDGE_MARGIN_SHOWN = 3.0
 
 
 def _spin(decimals: int, step: float, lo: float, hi: float, suffix: str = "") -> QDoubleSpinBox:
@@ -70,6 +75,8 @@ def _dim(text: str) -> QLabel:
 
 
 class InspectorPanel(QScrollArea):
+    combineRequested = Signal()  # "Combine two beams…" on a beamsplitter
+
     def __init__(self, doc: LayoutDocument, parent=None):
         super().__init__(parent)
         self.doc = doc
@@ -91,6 +98,7 @@ class InspectorPanel(QScrollArea):
         self._info: QLabel | None = None
         self._checks: QLabel | None = None
         self._ignored: QLabel | None = None
+        self._combine: QPushButton | None = None
         self._layout_stats: QLabel | None = None
         self._board_widgets: tuple[QComboBox, QDoubleSpinBox, QDoubleSpinBox, QDoubleSpinBox] | None = None
         self._notes_edit: QPlainTextEdit | None = None
@@ -125,6 +133,7 @@ class InspectorPanel(QScrollArea):
         self._info = None
         self._checks = None
         self._ignored = None
+        self._combine = None
         self._layout_stats = None
         self._board_widgets = None
         self._notes_edit = None
@@ -210,6 +219,15 @@ class InspectorPanel(QScrollArea):
         for field in unit.fields:
             self._add_param_row(form, field)
         self._vbox.addLayout(form)
+
+        # Shown while the part holds a beamsplitter (see refresh_info).
+        self._combine = QPushButton("Combine two beams…")
+        self._combine.setToolTip(
+            "Move this splitter to where two beams cross, turned and mounted so they leave as one beam (C)"
+        )
+        self._combine.clicked.connect(self.combineRequested.emit)
+        self._combine.setVisible(False)
+        self._vbox.addWidget(self._combine)
 
         self._vbox.addWidget(_separator())
         self._info = _dim("")
@@ -434,12 +452,15 @@ class InspectorPanel(QScrollArea):
             return
         self._refresh_auto_values(comp)  # e.g. the fork direction the solver picked
         placed = self.doc.analysis.units.get(comp.id)
+        if self._combine is not None:
+            self._combine.setVisible(placed is not None and splitter_element(placed.build) is not None)
         lines: list[str] = []
         board = self.doc.layout.breadboard
         unit = get_unit_type(comp.type)
         if unit.mounting is Mounting.HOLE:
             hole = board.hole_at(comp.x, comp.y)
-            lines.append(f"Post holder in hole {hole}" if hole else "Post holder is not on a hole")
+            anchor = unit.hole_anchor
+            lines.append(f"{anchor} in hole {hole}" if hole else f"{anchor} is not on a hole")
         elif unit.mounting is Mounting.PEDESTAL and placed is not None and placed.fork is not None:
             fork = placed.fork
             if fork.hole is not None:
@@ -449,7 +470,7 @@ class InspectorPanel(QScrollArea):
                     f"{normalize_angle(fork.angle + comp.angle):.0f}°"
                 )
         if placed is not None:
-            if placed.build.elements:
+            if len(placed.build.elements) == 1:  # several optics (an expander, a knife edge) are listed per beam below
                 cx, cy = comp.pose.apply(placed.build.elements[0].center)
                 lines.append(f"Optic centre ({cx:.3f}, {cy:.3f}) in")
             lines += list(placed.build.notes)
@@ -465,29 +486,41 @@ class InspectorPanel(QScrollArea):
     def _beam_lines(self, comp: Component) -> list[str]:
         lines = []
         placed = self.doc.analysis.units.get(comp.id)
-        if placed is None or not placed.build.elements:
+        if placed is None:
             return lines
         elements = [e.transformed(comp.pose) for e in placed.build.elements]
+        blocked = 0
         for seg in self.doc.analysis.trace.segments:
-            if seg.end_owner != comp.id or seg.end_event == "blocked":
+            if seg.end_owner != comp.id:
                 continue
-            # The optic this beam ends on (a unit may hold several, e.g. a beam expander).
-            element = min(elements, key=lambda e: point_segment_distance(seg.end, *e.endpoints)[0])
+            # The optic this beam ends on (a unit may hold several, e.g. a beam expander), if any.
+            distance, element = min(
+                ((point_segment_distance(seg.end, *e.endpoints)[0], e) for e in elements),
+                default=(math.inf, None),
+                key=lambda pair: pair[0],
+            )
+            if element is None or distance > 1e-6 or (seg.end_event == "blocked" and element.kind is not OpticKind.BLOCK):
+                blocked += seg.end_event == "blocked"  # by the body (or the back of a mirror)
+                continue
             d = np.asarray(seg.direction)
             cos_i = abs(float(np.dot(d, element.normal)))
             incidence = math.degrees(math.acos(min(1.0, cos_i)))
             offset = round(float(np.dot(np.asarray(seg.end) - np.asarray(element.center), element.tangent)), 3) + 0.0
             w = seg.state_at(seg.length).tangential.radius
             hit = f"{incidence:.1f}° incidence, {offset:+.3f}\" off centre, w {format_beam_size(w)}"
+            # How far the beam's centre is from the nearer edge, across the beam: the margin before it clips.
+            margin = (element.half_aperture - abs(offset - element.aperture_offset)) * cos_i / w if w > 0 else math.inf
+            if margin < EDGE_MARGIN_SHOWN:
+                hit += f", {margin:.1f} w from the edge"
             if seg.clip < 0.999:
                 hit += f", {100 * seg.clip:.1f}% passes"
             if len(elements) > 1:
                 lines.append(f"{element.name.removeprefix(comp.label).strip().capitalize()}: hit at {hit}")
             else:
                 lines.append(f"Beam hits at {hit}")
-        blocked = [s for s in self.doc.analysis.trace.segments if s.end_owner == comp.id and s.end_event == "blocked"]
         if blocked:
-            lines.append(f"{len(blocked)} beam(s) blocked by this mount's body")
+            what = "it" if placed.unit.structural or not elements else "this mount's body"
+            lines.append(f"{blocked} beam(s) blocked by {what}")
         return lines
 
     # ============================================================ commits

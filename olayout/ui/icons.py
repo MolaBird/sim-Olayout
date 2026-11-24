@@ -127,6 +127,16 @@ def _draw(name: str, p: QPainter) -> None:
         p.drawRoundedRect(QRectF(10, 14, 44, 40), 5, 5)
         p.drawLine(QPointF(32, 6), QPointF(32, 36))
         _arrow_head(p, QPointF(32, 6), -90, 10)
+    elif name == "combine":  # two beams meeting on a splitter, leaving as one
+        p.setPen(QPen(QColor("#ff5a5a"), 4.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        p.drawLine(QPointF(6, 34), QPointF(32, 34))
+        p.setPen(QPen(C.PROBE, 4.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        p.drawLine(QPointF(32, 6), QPointF(32, 34))
+        p.setPen(QPen(C.TEXT, 4.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        p.drawLine(QPointF(32, 34), QPointF(57, 34))
+        _arrow_head(p, QPointF(58, 34), 0, 9)
+        p.setPen(QPen(C.ACCENT, 4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        p.drawLine(QPointF(21, 23), QPointF(43, 45))
     elif name == "ghost":
         p.drawEllipse(QPointF(26, 32), 15, 15)
         p.setPen(QPen(C.TEXT, 4, Qt.PenStyle.DotLine))

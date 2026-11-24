@@ -28,6 +28,12 @@ MATERIALS: dict[str, Material] = {
     "laser": Material((0.82, 0.83, 0.85), specular=0.35, shininess=20),
     "laser_dark": Material((0.20, 0.21, 0.23), specular=0.30, shininess=18),
     "label": Material((0.85, 0.85, 0.87), specular=0.1, shininess=8),
+    # Clear-anodized aluminium: T-slot framing.
+    "aluminum": Material((0.70, 0.72, 0.75), specular=0.45, shininess=14, metallic=True),
+    # Black hardboard enclosure panels.
+    "board": Material((0.055, 0.056, 0.062), specular=0.06, shininess=6),
+    # Polished glass over silvered faces (a prism mirror seen from above).
+    "glass": Material((0.60, 0.66, 0.72), specular=0.8, shininess=60),
 }
 
 MATERIAL_NAMES: tuple[str, ...] = tuple(MATERIALS)

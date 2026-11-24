@@ -467,3 +467,189 @@ def test_mount_lifted_off_its_kb1x1_is_inert(type_id, event):
     mount = {"kb-mirror": "FMP1", "kb-h-mirror": "FMP1", "mag-km-pellicle": "KM100BP"}[type_id]
     assert mount in {p.part_id for p in build.detached_parts}  # still drawn, faintly
     assert lifted.units[m.id].footprints[Layer.OPTIC].area < on_area  # and out of the collision checks
+
+
+@pytest.mark.parametrize("type_id", ["objective", "h-objective"])
+def test_reflective_objective_focuses_at_its_working_distance(type_id):
+    """The LMM40X acts as a thin lens (f = 5 mm) placed so that a collimated beam
+    focuses one working distance in front of its nose."""
+    layout = Layout()
+    obj = make_component(layout, type_id, 10.5, 5.5)
+    make_component(layout, "laser", 2.0, 5.5, waist_um=1000.0)
+    result = analyze(layout)
+    assert not result.issues and not result.trace.warnings  # the cage plate, adapter and housing let it through
+    into, out = result.trace.segments[:2]
+    assert into.end_event == "transmit" and into.end_owner == obj.id
+    nose = obj.x + P.CP35_THICKNESS / 2 + P.LMM40X_NOSE
+    (waist,) = out.waist_positions()
+    # (The 1 mm input beam is not perfectly collimated: the focus moves by ~1e-5".)
+    assert out.point_at(waist)[0] == pytest.approx(nose + P.LMM40X_WD_MM * MM, abs=1e-4)
+    w_lens = into.state_at(into.length).tangential.radius
+    expected = 633 * NM * P.LMM40X_EFL_MM * MM / (math.pi * w_lens)  # w0 = λ f / (π w)
+    assert out.state_at(waist).tangential.radius == pytest.approx(expected, rel=1e-4)
+    parts = {p.part_id for p in result.units[obj.id].build.parts}
+    assert {"CP35", "M1RMSS", "LMM40X"} <= parts
+
+
+def test_objective_clips_beams_wider_than_its_pupil():
+    layout = Layout()
+    make_component(layout, "objective", 10.5, 5.5)
+    make_component(layout, "laser", 2.0, 5.5, waist_um=3000.0)  # w 3 mm on a Ø5.1 mm pupil
+    result = analyze(layout)
+    w = result.trace.segments[0].state_at(result.trace.segments[0].length).tangential.radius
+    half_pupil = P.LMM40X_PUPIL_MM / 2 * MM
+    assert result.trace.segments[0].clip == pytest.approx(math.erf(math.sqrt(2) * half_pupil / w), rel=1e-6)
+    assert any(w.kind is WarningKind.CLIPPED for w in result.trace.warnings)
+
+
+def test_square_mirror_in_a_kmsr_folds_the_beam():
+    layout = Layout()
+    m = make_component(layout, "sq-km-mirror", 0.0, 0.0, angle=135.0)
+    result = analyze(layout)
+    # A 6 mm PFSQ10 against the holder's back wall: the surface sits 0.427" + 6 mm in front of the post.
+    surface = P.KMSR_HOLDER[0][1] + 6.0 * MM
+    assert math.hypot(*optic_center(result, m)) == pytest.approx(surface, abs=1e-9)
+    cx, cy = optic_center(result, m)
+    m.x, m.y = 8.0 - cx, 5.0 - cy
+    make_component(layout, "laser", 2.0, 5.0)
+    result = analyze(layout)
+    first, second = result.trace.segments[:2]
+    assert first.end_event == "reflect" and first.end_owner == m.id
+    assert second.direction == pytest.approx((0.0, 1.0), abs=1e-9)
+    assert result.units[m.id].unit.orientations() == [("bottom", "Upright (bottom tap)")]
+
+
+def test_kmsr_is_a_mirror_mount_with_a_solid_back():
+    layout = Layout()
+    m = make_component(layout, "sq-km-mirror", 0.0, 0.0, angle=180.0)
+    m.params["optic"]["kind"] = "window"  # anything transmitted runs into the holder's back wall
+    result = analyze(layout)
+    cx, cy = optic_center(result, m)
+    m.x, m.y = 8.0 - cx, 5.0 - cy
+    make_component(layout, "laser", 2.0, 5.0)
+    result = analyze(layout)
+    assert result.trace.segments[1].end_event == "blocked" and result.trace.segments[1].end_owner == m.id
+
+
+def _stage_at_focus(sample_kind: str):
+    """A collimated beam, a reflective objective, and a MAX311D whose sample sits on the focus."""
+    layout = Layout()
+    make_component(layout, "laser", 2.0, 8.5, waist_um=1000.0)
+    obj = make_component(layout, "objective", 9.0, 8.5)
+    stage = make_component(layout, "sample-stage", 13.5, 9.5, angle=180.0)  # the sample faces -x
+    stage.params["optic"]["kind"] = sample_kind
+    focus = obj.x + P.CP35_THICKNESS / 2 + P.LMM40X_NOSE + P.LMM40X_WD_MM * MM
+    sample_x, _ = optic_center(analyze(layout), stage)
+    stage.params["sample"]["standoff_mm"] = (sample_x - focus) / MM  # the sample faces -x: forward is -x
+    return layout, stage, focus
+
+
+def test_sample_stage_holds_the_sample_at_the_objective_focus():
+    layout, stage, focus = _stage_at_focus("block")
+    result = analyze(layout)
+    assert not result.issues
+    assert optic_center(result, stage)[0] == pytest.approx(focus)
+    into, onto = result.trace.segments[:2]
+    assert onto.end_event == "blocked" and onto.end_owner == stage.id  # absorbed by the sample
+    assert onto.state_at(onto.length).tangential.radius == pytest.approx(1.0 * UM, rel=0.02)  # in focus
+    assert {p.part_id for p in result.units[stage.id].build.parts} == {"MAX311D", "SAMPLE"}
+
+
+def test_a_reflective_sample_sends_the_beam_back_collimated():
+    layout, stage, _ = _stage_at_focus("mirror")
+    segments = analyze(layout).trace.segments
+    back = [s for s in segments if s.direction[0] < -0.999]
+    out = back[-1]  # back through the objective
+    assert out.state.tangential.radius == pytest.approx(1.0 * MM, rel=0.01)
+    # Collimated again: the same Rayleigh range (195") as the beam that came in.
+    assert out.state.q_t.imag == pytest.approx(segments[0].state.q_t.imag, rel=1e-3)
+
+
+def test_stage_travel_moves_the_sample_and_is_limited():
+    layout, stage, _ = _stage_at_focus("block")
+    x0, y0 = optic_center(analyze(layout), stage)
+    stage.params["stage"] = {"focus_mm": 1.5, "lateral_mm": -0.5, "face": "x"}
+    x1, y1 = optic_center(analyze(layout), stage)
+    # The stage faces -x (angle 180): toward the objective is -x, "across" (+y in its frame) is -y.
+    assert (x1 - x0, y1 - y0) == pytest.approx((-1.5 * MM, 0.5 * MM))
+    stage.params["stage"]["focus_mm"] = 3.0
+    result = analyze(layout)
+    assert optic_center(result, stage)[0] - x0 == pytest.approx(-2.0 * MM)  # ±2 mm of travel
+    assert any("clamped" in note for note in result.units[stage.id].build.notes)
+
+
+def test_stage_sample_faces_are_mirror_images():
+    layout = Layout()
+    stage = make_component(layout, "sample-stage", 10.5, 10.5)
+    left = optic_center(analyze(layout), stage)
+    stage.params["stage"]["face"] = "y"
+    right = optic_center(analyze(layout), stage)
+    assert left[0] == pytest.approx(right[0]) and left[1] - 10.5 == pytest.approx(10.5 - right[1])
+    assert left[0] - 10.5 == pytest.approx(55.2 * MM)  # the platform's face, 2.17" in front of the base centre
+
+
+def test_stage_is_screwed_to_the_hole_grid():
+    layout = Layout()
+    stage = make_component(layout, "sample-stage", 10.3, 10.5)
+    issues = analyze(layout).issues
+    assert [i.kind for i in issues] == [IssueKind.OFF_HOLE] and "base centre" in issues[0].message
+    stage.x = 10.5  # on a hole: its counterbores line up with the grid
+    assert analyze(layout).issues == []
+
+
+def _knife_edge_with_beams(offset: float, waist_um: float = 2200.0):
+    """A knife edge at (10, 9) sending light toward -x, fed from above and below ``offset`` behind its edge."""
+    layout = Layout()
+    knife = make_component(layout, "knife-edge", 10.0, 9.0, angle=180.0)
+    make_component(layout, "laser", 10.0 + offset, 12.0, angle=-90.0, waist_um=waist_um)
+    make_component(layout, "laser", 10.0 + offset, 6.0, angle=90.0, waist_um=waist_um)
+    return layout, knife
+
+
+def test_knife_edge_combines_beams_from_opposite_sides():
+    w = 2.2e3 * UM
+    layout, knife = _knife_edge_with_beams(1.5 * w)
+    result = analyze(layout)
+    assert result.issues == []
+    hits = [s for s in result.trace.segments if s.end_owner == knife.id]
+    assert len(hits) == 2 and all(s.end_event == "reflect" for s in hits)
+    # Each leg reaches right up to the edge: a beam 1.5 w from it keeps all but its far tail.
+    radius = hits[0].state_at(hits[0].length).tangential.radius
+    assert hits[0].clip == pytest.approx(0.5 * (1 + math.erf(math.sqrt(2) * 1.5 * w / radius)), rel=1e-6)
+    out = [s for s in result.trace.segments if s.parent is not None]
+    assert all(s.direction == pytest.approx((-1.0, 0.0), abs=1e-9) for s in out)
+    assert sorted(s.start[1] for s in out) == pytest.approx([9.0 - 1.5 * w, 9.0 + 1.5 * w])
+    assert not [x for x in result.trace.warnings if x.kind is WarningKind.CLIPPED]
+
+
+def test_knife_edge_splits_a_beam_on_its_edge():
+    layout, knife = _knife_edge_with_beams(1e-4)  # a hair inside each leg
+    result = analyze(layout)
+    hits = [s for s in result.trace.segments if s.end_owner == knife.id]
+    assert len(hits) == 2 and all(s.clip == pytest.approx(0.5, abs=0.01) for s in hits)
+
+
+def test_knife_edge_glass_stops_beams_from_behind():
+    layout = Layout()
+    knife = make_component(layout, "knife-edge", 10.0, 9.0, angle=180.0)
+    make_component(layout, "laser", 14.0, 9.0, angle=180.0)  # into the hypotenuse
+    (seg,) = analyze(layout).trace.segments
+    assert seg.end_event == "blocked" and seg.end_owner == knife.id
+
+
+@pytest.mark.parametrize("type_id", ["iris", "h-iris"])
+def test_iris_passes_its_opening_and_stops_the_rest(type_id):
+    layout = Layout()
+    iris = make_component(layout, type_id, 10.5, 5.5, iris={"aperture_mm": 2.0})
+    beam = make_component(layout, "laser", 2.0, 5.5, waist_um=1000.0)
+    result = analyze(layout)
+    first = result.trace.segments[0]
+    assert first.end_event == "transmit" and first.end_owner == iris.id
+    radius = first.state_at(first.length).tangential.radius
+    assert first.clip == pytest.approx(math.erf(math.sqrt(2) * 1.0 * MM / radius), rel=1e-6)
+    beam.y = 5.5 + 3.0 * MM  # beside the opening: the blades stop it
+    (seg,) = analyze(layout).trace.segments
+    assert seg.end_event == "blocked" and seg.end_owner == iris.id
+    beam.y = 5.5 + 15.0 * MM  # beyond the housing's bore: the housing stops it
+    (seg,) = analyze(layout).trace.segments
+    assert seg.end_event == "blocked" and seg.end_owner == iris.id

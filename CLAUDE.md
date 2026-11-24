@@ -2,7 +2,7 @@ Develop a 2D engine for optical layout to scale. Use imperial system
 
 what it includes:
 
-- optical breadboard 
+- optical breadboard
 - standard Thorlabs mounts: FMP1, KM100, KM100CP, KM100BP, SM1ZB, CP35, KB1X1
 - standard Thorlabs base mounts: PH2, BE1, CF125C...
 - Combined units:

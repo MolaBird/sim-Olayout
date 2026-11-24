@@ -80,6 +80,40 @@ def render_mesh_sprite(
     return Sprite(rgba=rgba, shadow=shadow, x0=gbuffer.x0, y1=gbuffer.y1, ppi=ppi, z_top=float(vertices[:, 2].max()))
 
 
+STRETCH_CAP = 0.3  # inches kept at each end: past the bevels, occlusion and shadow of the end faces
+
+
+def can_stretch(template_span: tuple[float, float], span: tuple[float, float]) -> bool:
+    """Whether a part is long enough (and its template too) to be drawn by stretching."""
+    return min(template_span[1] - template_span[0], span[1] - span[0]) >= 2 * STRETCH_CAP
+
+
+def stretch_sprite(template: Sprite, template_span: tuple[float, float], span: tuple[float, float]) -> Sprite:
+    """The sprite of a part that is uniform along x, from the sprite of a short
+    piece of it (``template``, solid over ``template_span``): both ends are
+    copied and the middle column repeated, out to ``span``.  Any length then
+    costs a copy instead of a render.  Needs :func:`can_stretch`."""
+    ppi = template.ppi
+    (t0, t1), (s0, s1) = template_span, span
+    left = int(round((t0 + STRETCH_CAP - template.x0) * ppi))  # template columns kept on the left
+    right = int(round((t1 - STRETCH_CAP - template.x0) * ppi))  # first template column kept on the right
+    centre = int(round(((t0 + t1) / 2 - template.x0) * ppi))
+    middle = max(int(round((s1 - s0 - 2 * STRETCH_CAP) * ppi)), 0)
+
+    def stretched(image: np.ndarray) -> np.ndarray:
+        fill = np.repeat(image[:, centre : centre + 1], middle, axis=1)
+        return np.ascontiguousarray(np.concatenate([image[:, :left], fill, image[:, right:]], axis=1))
+
+    return Sprite(
+        rgba=stretched(template.rgba),
+        shadow=stretched(template.shadow),
+        x0=s0 - (t0 - template.x0),
+        y1=template.y1,
+        ppi=ppi,
+        z_top=template.z_top,
+    )
+
+
 def model_key(prims, ppi: float) -> str:
     text = f"v{RENDER_VERSION}|{ppi}|{SUPERSAMPLE}|{MARGIN_INCHES}|{prims!r}"
     return hashlib.sha1(text.encode()).hexdigest()[:16]

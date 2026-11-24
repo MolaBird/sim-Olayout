@@ -29,6 +29,7 @@ from olayout.catalog.units import (
     default_fork,
     get_unit_type,
     new_component_params,
+    set_param,
 )
 from olayout.core.geometry import Pose
 from olayout.core.layout import Component
@@ -192,20 +193,40 @@ def source_icon_rect() -> QRectF:
 
 
 # ------------------------------------------------------------- thumbnails
+FORK_PART_IDS = frozenset({"CF125C", "SCREW"})  # the pedestal's swivelling clamp
+HOLDER_PART_IDS = FORK_PART_IDS | {"PH2", "PH2@BE1", "BE1"}  # what a mount stands on
+THUMB_FORK_OPACITY = 0.4
+
+
+def thumbnail_framing(parts: list[PlacedPart]) -> list[PlacedPart]:
+    """The parts a thumbnail is framed on: the component itself, not the post
+    holder or pedestal it stands on, so a pedestal unit is drawn exactly like
+    its hole-mounted twin.  A bare base has nothing else: it is framed whole."""
+    return [p for p in parts if p.part_id not in HOLDER_PART_IDS] or parts
+
+
 def unit_thumbnail(type_id: str, size: int = 64, angle: float = 90.0) -> QPixmap:
-    """Render a unit as it appears on the board (optic facing up), for the library."""
+    """Render a unit as it appears on the board (optic facing up), for the library.
+
+    The post holder or pedestal shows underneath, the pedestal's clamping fork
+    only faintly; either may run off the edge.
+    """
     unit = get_unit_type(type_id)
-    comp = Component(id="thumb", type=type_id, angle=angle, params=new_component_params(type_id))
+    params = new_component_params(type_id)
+    for key, value in unit.preview_params:  # e.g. a short rail, so it does not shrink to a line
+        set_param(params, key, value)
+    comp = Component(id="thumb", type=type_id, angle=angle, params=params)
     fork = default_fork() if unit.mounting is Mounting.PEDESTAL else None
     placed = BuildCache().place(comp, fork)
     parts = list(placed.parts)
+    framed = thumbnail_framing(parts)
 
     pixmap = QPixmap(size, size)
     pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
     painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
-    bounds = parts_bounds(parts) if parts else source_icon_rect()
+    bounds = parts_bounds(framed) if framed else source_icon_rect()
     rotated = QTransform().rotate(-angle).mapRect(bounds)
     scale = 0.88 * size / max(rotated.width(), rotated.height(), 1e-6)
     painter.translate(size / 2, size / 2)
@@ -213,8 +234,13 @@ def unit_thumbnail(type_id: str, size: int = 64, angle: float = 90.0) -> QPixmap
     painter.translate(-rotated.center())
     painter.rotate(-angle)
     if parts:
+        clamp = [] if framed is parts else [p for p in parts if p.part_id in FORK_PART_IDS]
+        if clamp:
+            painter.setOpacity(THUMB_FORK_OPACITY)
+            paint_parts(painter, clamp, QPointF(0.02, 0.02), 0.0)
+            painter.setOpacity(1.0)
         for layer in Layer:
-            layer_parts = [p for p in parts if p.layer is layer]
+            layer_parts = [p for p in parts if p.layer is layer and not any(p is c for c in clamp)]
             paint_parts(painter, layer_parts, QPointF(0.02, 0.02), LAYER_HEIGHT[layer] * 0.4)
         for visual in placed.build.optic_visuals:
             paint_optic(painter, visual)
