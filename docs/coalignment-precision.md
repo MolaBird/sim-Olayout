@@ -114,7 +114,7 @@ spots on the sample.
 
 ## 4. Methods
 
-### A. Far-field knife edge on the alignment board (recommended)
+### A. Far-field knife edge on the alignment board
 
 **Setup.** Both pick-offs (M9 for the top arm, M8 for the bottom) send their
 sample down the same line, off this board at x = 7.5″, so one setup serves both
@@ -151,6 +151,14 @@ Focal spot radii and depths of focus at f = 500 mm:
 4. **Check the position** with the blade close to the pick-off (the near
    field). A 0.1 mm tolerance is easy there: 1% noise gives about 14 µm.
 
+**Drawbacks.**
+- It needs stages that withdraw a blade and return it to a parked position
+  within a few µm.
+- Position and angle are read in two different planes, so you walk between
+  them.
+- Method C below gets the same angle information from the sample plane,
+  without an extra mirror. It is the recommended route.
+
 **Precision.** About 10 µrad at the pick-off with 1% noise, i.e. under 0.03 µm
 on the sample. That is 20× better than needed, so drift sets the real limit.
 Always approach the 50% point from the same side, to avoid backlash.
@@ -181,15 +189,24 @@ other.
 
 This is the best choice if you want to monitor co-alignment continuously.
 
-### C. Knife edge at the sample with the MAX311D (commissioning check)
+### C. Razor blade at the sample with the MAX311D (recommended fine step)
 
 **What it measures.** The spots themselves, after every optic including the
-objective. Do it once at set-up, and again whenever the objective or a
-collimator changes.
+objective. The sample plane is the objective's back focal plane, so a spot's
+position there is f·θ: the objective is the far-field optic, and nothing else
+is needed.
+
+**When to use it.** After the pinholes have set the position and a coarse
+angle, as the fine-tuning step. Repeat whenever a collimator or the objective
+changes.
+
+**Procedure.** `arm-coalignment.md` gives it step by step for one arm. It
+includes the blade and detector choices: uncoated razor blades, and a
+large-area pyroelectric detector read through a chopper and lock-in.
 
 **The edge.**
-- Use an edge on a substrate that transmits both 633 nm and 2.92 µm: a
-  chromium or gold edge on CaF₂ or sapphire, or a razor blade.
+- A razor blade is simplest: opaque at both wavelengths, with no substrate.
+- A chromium or gold edge on CaF₂ or sapphire also works.
 - Avoid N-BK7, which absorbs beyond about 2.5 µm, and UV-grade fused silica,
   whose OH absorption band sits near 2.7 µm.
 
@@ -205,8 +222,9 @@ collimator changes.
    - whether a spot walks sideways with defocus, which means its beam is
      off-centre in the pupil.
 
-**Cost.** It needs room for the edge and a detector at the sample position,
-so it is a set-up exercise rather than a routine check.
+**Cost.** The sample comes out while you measure, and the detector needs to
+sit within about 7 mm of the focus, or behind a collection lens. In exchange
+there is no extra mirror, and the stage you already own does the scanning.
 
 ### D. Photothermal readout through the HeNe (visible detection only)
 
@@ -260,19 +278,23 @@ in mirror tilt. That gives about 20–50 µrad, angle only.
 | Pinholes + max 2923 power (current) | angle and position, coupled | 0.3–1 mrad | 0.8–2.6 µm | — | low, slow to converge |
 | A. Far-field knife edge | angle | ~10 µrad (1% noise) | < 0.03 µm | concave mirror, blade on a micrometer stage, detector | moderate |
 | B. Knife-edge bi-cell | angle, live | ~5 µrad | < 0.02 µm | knife-edge mirror, two matched detectors | moderate |
-| C. Knife edge at the sample | the spots (x, y, focus depth) | — | ~0.05 µm | edge on CaF₂/sapphire, detector at the sample | moderate–high |
+| C. Razor blade at the sample | the spots (x, y), focus depth, pupil overlap | — | ~0.05 µm | razor blades, pyroelectric detector (with your chopper and lock-in) | moderate |
 | D. Photothermal | the spots, during use | — | ~0.1–0.5 µm | absorbing sample, Si quadrant PD + lock-in, or a film | moderate |
 | E. Fiber back-coupling | angle | 20–50 µrad | ~0.05–0.13 µm | fiber couplers, retro mirror | moderate, feedback risk |
 
 ## 6. Recommended workflow
 
-1. **Routine co-alignment:** method A on the alignment board. Seat M9, align
-   the top arm's 2923 to its HeNe, lift M9, then the same with M8. Upgrade to B
-   if you want to monitor continuously.
-2. **Commissioning:** method C once. It confirms the spots, the 57 µm spacing,
-   the focus-depth match and the pupil centring, all at the sample.
+1. **Position and coarse angle:** your pinholes on the alignment board. Seat
+   M9, align the top arm's 2923 to its HeNe, lift M9, then the same with M8.
+   Position only needs 0.1–0.3 mm; aim for an angle within about 0.3 mrad.
+2. **Fine angle, focus depth and pupil overlap:** method C at the sample,
+   following `arm-coalignment.md`. M3 (M2 for the bottom arm) finishes the
+   angle.
 3. **In use:** method D if your samples absorb at 2.9 µm. It checks the
    overlap without touching the optics.
+
+Methods A and B remain options if the sample position can't take a blade and a
+detector.
 
 ## Formulas
 

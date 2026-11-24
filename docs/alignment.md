@@ -58,8 +58,12 @@ new layout uses five optics: M20, M21, M22, M23 and the knife edge KE1.
   (e.g. Thorlabs PT1) under KE1 and/or under M20 and M21, oriented along the
   beam. Without one, these slides are done by loosening the fork and pushing
   the base, which is coarse but adequate.
-- **Co-alignment tools:** see `coalignment-precision.md`. They all go on the
-  alignment board, not on this one.
+- **Co-alignment tools:**
+  - The pinholes stay on the alignment board.
+  - The fine step uses two uncoated razor blades in the sample's place and a
+    large-area pyroelectric detector (e.g. Gentec QS9-IL or Ophir RM9), read
+    through your chopper and lock-in.
+  - See `arm-coalignment.md`.
 
 **No longer needed:**
 - 5 × KMSR + PFSQ10-03-P01 square mirrors (draft M1, M10, M11, M14, M15), with
@@ -210,11 +214,12 @@ The 2923 runs FC3 → M4 → back up-left to M3 → along y = 15.451 through BS2
      | | At the pick-off | Equivalent downstream |
      |---|---|---|
      | Angle | ≤ 0.2 mrad | 0.5 µm between the HeNe and 2923 spots on the sample |
-     | Position | ≤ 0.1 mm | 0.2 mm in the objective's pupil |
+     | Position | ≤ 0.1–0.3 mm | 0.2–0.6 mm in the objective's pupil |
 
-   - Maximising 2923 power through pinholes struggles to reach that.
-     `coalignment-precision.md` describes methods that do, without a mid-IR
-     camera.
+   - The pinholes reach the position target. Get the angle within about
+     0.3 mrad here, and finish it at the sample with a razor blade once the
+     downstream path is aligned (Step 9). `arm-coalignment.md` covers both
+     stages.
 4. **Lift the pick-off** when done.
 
 ### Step 5: beam expanders (BX6, BX5)
@@ -306,16 +311,23 @@ Watch the two HeNe spots on the sample with your imaging system.
    the pupil, by 1.7 mm per mrad. After a correction of more than about
    0.2 mrad (2 µm of spot), repeat the defocus check.
 
-### Step 9: focus depth
+### Step 9: fine co-alignment and focus depth at the sample
 
-1. **Measure.** Compare the HeNe and 2923 focal planes. Use the in-situ knife
-   edge or the photothermal check in `coalignment-precision.md`.
-2. **Adjust the HeNe, not the 2923.** Bring each HeNe focus onto its 2923
-   focus with the HeNe collimator's SM1ZB z knob (FC4, FC6), so the 2923 keeps
-   its best collimation. In the model, moving the HeNe fiber about 0.08 mm
-   toward its lens closes the 5.4 µm gap; the bench value will differ.
-3. **Repeat Step 4**, because refocusing a collimator can shift its beam
-   slightly.
+Follow stage 2 of `arm-coalignment.md`, for each arm in turn. Put razor blades
+in the sample's place, a pyroelectric detector behind them, and read it with
+your chopper and lock-in.
+
+1. **Measure the focus depths.** A z-scan gives each colour's focal plane.
+   Bring each HeNe focus onto its 2923 focus with the HeNe collimator's SM1ZB z
+   knob (FC4, FC6), so the 2923 keeps its best collimation. In the model,
+   moving the HeNe fiber about 0.08 mm toward its lens closes the 5.4 µm gap;
+   the bench value will differ.
+2. **Finish the angle.** Scan both colours' spot centres and move the 2923
+   onto the HeNe with M3 (M2 for the bottom arm), 5.15 µm per mrad.
+3. **Check the pupil overlap.** Compare how the two spots walk with defocus.
+   This avoids a trip back to the alignment board.
+4. **Repeat Step 4 if you refocused a collimator a lot,** because refocusing
+   can shift its beam slightly.
 
 ### Step 10: final checks
 
