@@ -200,8 +200,8 @@
     {
       "id": "c18",
       "type": "mag-km-pellicle",
-      "x": 4.990855,
-      "y": 1.969507,
+      "x": 5.150308,
+      "y": 2.12896,
       "angle": 45.0,
       "label": "BS1",
       "orientation": "side",
@@ -239,8 +239,8 @@
     {
       "id": "c20",
       "type": "mag-km-pellicle",
-      "x": 4.990855,
-      "y": 16.030493,
+      "x": 5.150308,
+      "y": 15.87104,
       "angle": 315.0,
       "label": "BS2",
       "orientation": "bottom",
@@ -304,7 +304,7 @@
     {
       "id": "c40",
       "type": "kb-mirror",
-      "x": 7.606929,
+      "x": 7.107,
       "y": 15.557929,
       "angle": 225.0,
       "label": "M9",
@@ -328,7 +328,7 @@
     {
       "id": "c43",
       "type": "kb-mirror",
-      "x": 7.606929,
+      "x": 7.107,
       "y": 2.655929,
       "angle": 225.0,
       "label": "M8",
@@ -352,7 +352,7 @@
     {
       "id": "c46",
       "type": "knife-edge",
-      "x": 12.21,
+      "x": 12.2842,
       "y": 9.0,
       "angle": 180.0,
       "label": "KE1",
@@ -388,7 +388,7 @@
       "type": "km-h-mirror",
       "x": 15.5,
       "y": 2.5,
-      "angle": 119.55,
+      "angle": 119.496,
       "label": "M23",
       "params": {
         "optic": {
@@ -398,46 +398,6 @@
           "reflectance": 0.5,
           "transmittance": 1.0,
           "thickness_mm": null
-        }
-      }
-    },
-    {
-      "id": "c50",
-      "type": "kb-h-mirror",
-      "x": 15.5,
-      "y": 8.5,
-      "angle": 45.0,
-      "label": "M25",
-      "params": {
-        "kb1x1": {
-          "seated": false
-        },
-        "optic": {
-          "kind": "mirror",
-          "roc_mm": 0.0,
-          "focal_length_mm": 100.0,
-          "reflectance": 0.5,
-          "transmittance": 1.0,
-          "thickness_mm": null
-        }
-      }
-    },
-    {
-      "id": "c51",
-      "type": "mag-km-pellicle",
-      "x": 15.25,
-      "y": 5.125,
-      "angle": 45.0,
-      "label": "BS3",
-      "params": {
-        "kb1x1": {
-          "seated": false
-        },
-        "optic": {
-          "reflectance": 0.08
-        },
-        "fork": {
-          "angle": null
         }
       }
     },
@@ -472,7 +432,7 @@
       "type": "km-h-mirror",
       "x": 12.5,
       "y": 11.5,
-      "angle": 217.0,
+      "angle": 217.045,
       "label": "M27",
       "params": {
         "optic": {
@@ -534,7 +494,7 @@
       "type": "km-h-mirror",
       "x": 12.5,
       "y": 6.5,
-      "angle": 142.02,
+      "angle": 141.946,
       "label": "M30",
       "params": {
         "optic": {
@@ -564,6 +524,126 @@
           "thickness_mm": null
         }
       }
+    },
+    {
+      "id": "c60",
+      "type": "board",
+      "x": 0.5,
+      "y": 0.5,
+      "angle": 0.0,
+      "label": "BD1",
+      "params": {
+        "board": {
+          "length_in": 19.0,
+          "thickness_in": 0.125
+        }
+      }
+    },
+    {
+      "id": "c61",
+      "type": "board",
+      "x": 0.5,
+      "y": 17.5,
+      "angle": 0.0,
+      "label": "BD2",
+      "params": {
+        "board": {
+          "length_in": 14.0,
+          "thickness_in": 0.125
+        }
+      }
+    },
+    {
+      "id": "c62",
+      "type": "board",
+      "x": 0.5,
+      "y": 17.5,
+      "angle": 270.0,
+      "label": "BD3",
+      "params": {
+        "board": {
+          "length_in": 17.0,
+          "thickness_in": 0.125
+        }
+      }
+    },
+    {
+      "id": "c63",
+      "type": "board",
+      "x": 19.5,
+      "y": 12.5,
+      "angle": 270.0,
+      "label": "BD4",
+      "params": {
+        "board": {
+          "length_in": 12.0,
+          "thickness_in": 0.125
+        }
+      }
+    },
+    {
+      "id": "c64",
+      "type": "board",
+      "x": 16.5,
+      "y": 12.5,
+      "angle": 0.0,
+      "label": "BD5",
+      "params": {
+        "board": {
+          "length_in": 3.0,
+          "thickness_in": 0.125
+        }
+      }
+    },
+    {
+      "id": "c65",
+      "type": "board",
+      "x": 14.5,
+      "y": 17.5,
+      "angle": 270.0,
+      "label": "BD6",
+      "params": {
+        "board": {
+          "length_in": 5.0,
+          "thickness_in": 0.125
+        }
+      }
+    },
+    {
+      "id": "c66",
+      "type": "mag-h-pellicle-2in",
+      "x": 15.5,
+      "y": 8.5,
+      "angle": 45.0,
+      "label": "BS4",
+      "params": {
+        "kb1x1": {
+          "seated": true
+        },
+        "optic": {
+          "reflectance": 0.08
+        }
+      }
+    },
+    {
+      "id": "c67",
+      "type": "mag-km-pellicle-2in",
+      "x": 15.375,
+      "y": 5.125,
+      "angle": 45.0,
+      "label": "BS5",
+      "orientation": "side",
+      "params": {
+        "kb1x1": {
+          "seated": true
+        },
+        "optic": {
+          "reflectance": 0.08
+        },
+        "fork": {
+          "angle": null
+        }
+      }
     }
   ],
   "measurements": [
@@ -576,6 +656,17 @@
       "b": [
         4.675445,
         8.88014
+      ]
+    },
+    {
+      "id": "m2",
+      "a": [
+        12.443683,
+        9.233683
+      ],
+      "b": [
+        12.462575,
+        8.731264
       ]
     }
   ],

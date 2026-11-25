@@ -20,6 +20,41 @@
     "origin_mm": [-22.03, 31.50, -26.60],
     "material": "anodized"
   },
+  "KM200BP": {
+    "_note": "drawn with its L corner to the lower left: rolled 90 deg; origin: pellicle axis at the depth of the 8-32 taps",
+    "file": "KM200BP-Step.step",
+    "axes": ["z", "-y", "x"],
+    "origin_mm": [110.434, -2.21, -35.588],
+    "material": "anodized"
+  },
+  "BP108": {
+    "_note": "origin: membrane centre on the ring's flat (front) face; the relieved face is toward the mount",
+    "file": "BP108-Step.step",
+    "axes": ["z", "x", "y"],
+    "origin_mm": [0.0, 0.0, 2.381],
+    "material": "anodized"
+  },
+  "BP208": {
+    "_note": "as BP108",
+    "file": "BP208-Step.step",
+    "axes": ["z", "x", "y"],
+    "origin_mm": [0.0, 0.0, 2.381],
+    "material": "anodized"
+  },
+  "BP107": {
+    "_note": "origin: pellicle axis on the membrane (the ring's front face, behind the clamp tabs); 8-32 tap in the bottom",
+    "file": "BP107-Step.step",
+    "axes": ["z", "x", "y"],
+    "origin_mm": [0.0, 10.5284, 3.556],
+    "material": "anodized"
+  },
+  "BP207": {
+    "_note": "as BP107",
+    "file": "BP207-Step.step",
+    "axes": ["z", "x", "y"],
+    "origin_mm": [0.0, 16.8978, 3.556],
+    "material": "anodized"
+  },
   "FMP1": {
     "file": "FMP1-Step.step",
     "axes": ["z", "x", "y"],

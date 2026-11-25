@@ -16,7 +16,7 @@ python -m olayout examples/demo.olayout.json        # open a layout
 python -m venv .venv
 .venv\Scripts\python -m pip install -r requirements.txt
 .venv\Scripts\python -m olayout
-.venv\Scripts\python -m pytest                      # 203 tests, headless
+.venv\Scripts\python -m pytest                      # 246 tests, headless
 ```
 
 Requirements: Python ≥ 3.11, PySide6, numpy and shapely. `trimesh` and
@@ -29,11 +29,11 @@ vendor STEP files; the rendered sprites are committed (see
 | Requirement | Where |
 |---|---|
 | **Breadboards**<br>Your 21" × 20" board by default, plus the Thorlabs MB series and optical tables: 1/4"-20 holes on 1" centers, first hole 1/2" from the edge, column/row numbers, mounting counterbores. | `core/breadboard.py` |
-| **Thorlabs parts**<br>KM100, KM100CP, KM100BP with its BP108 pellicle, KMSR (for the PFSQ10-03-P01 1" square mirror), FMP1, KB1X1, CP35, M1RMSS adapter, LMM40X-P01 reflective objective, SM1ZB, ER cage rods (any length), BE02R reflective beam expander, MAX311D NanoMax stage, MRAK25-P01 knife-edge prism mirror on a KM100B platform, ID25 iris, PH2, BE1, CF125C. Each is modeled in 3D from Thorlabs mechanical drawings and checked against the vendor STEP files (the MRAK25, KM100B and ID25 come from catalog dimensions only). | `catalog/parts.py` |
-| **Combined units**<br>`base`, `km-mirror`, `mag-km-pellicle` (KM100BP + BP108 8:92 pellicle on a KB1X1), `km-h-mirror`, `mirror`, `h-mirror`, `kb-mirror` and `kb-h-mirror` (FMP1 on a KB1X1), and `collimator` (SM1ZB on a PH2 + four ER rods of any length + CP35 holding the lens), plus `sq-km-mirror` (PFSQ10-03-P01 in a KMSR on a pedestal base), `lens`, `h-lens`, `objective` and `h-objective` (LMM40X-P01 in an M1RMSS, in a CP35 on a post), the `beam-expander` (BE02R) and its mirrored version, the `sample-stage` (MAX311D with a sample on its platform), the `knife-edge` combiner (MRAK25-P01 on a KM100B, pedestal base), `iris` and `h-iris` (ID25 on a post), and a free `laser` beam source. | `catalog/units.py` |
+| **Thorlabs parts**<br>KM100, KM100CP, KM100BP and KM200BP kinematic pellicle mounts, BP107 and BP207 fixed pellicle mounts, BP108 (Ø1") and BP208 (Ø2") pellicles, KMSR (for the PFSQ10-03-P01 1" square mirror), FMP1, KB1X1, CP35, M1RMSS adapter, LMM40X-P01 reflective objective, SM1ZB, ER cage rods (any length), BE02R reflective beam expander, MAX311D NanoMax stage, MRAK25-P01 knife-edge prism mirror on a KM100B platform, ID25 iris, LB1 beam dump, PH2, BE1, CF125C. Each is modeled in 3D from Thorlabs mechanical drawings and checked against the vendor STEP files (the MRAK25, KM100B, ID25 and LB1 come from catalog dimensions only). Four simple machined parts (a BE02R riser, a knife-edge holder, a beam block and a pinhole target) have shop drawings generated from the same model: see [Custom parts](#custom-machined-parts). | `catalog/parts.py` |
+| **Combined units**<br>`base`, `km-mirror`, eight magnetic pellicle beamsplitters (Ø1" or Ø2" pellicle, in a kinematic or a fixed mount, on a KB1X1, on a pedestal base or in a hole: see below), `km-h-mirror`, `mirror`, `h-mirror`, `kb-mirror` and `kb-h-mirror` (FMP1 on a KB1X1), and `collimator` (SM1ZB on a PH2 + four ER rods of any length + CP35 holding the lens), plus `sq-km-mirror` (PFSQ10-03-P01 in a KMSR on a pedestal base), `lens`, `h-lens`, `objective` and `h-objective` (LMM40X-P01 in an M1RMSS, in a CP35 on a post), the `beam-expander` (BE02R) and its mirrored version, `beam-expander-riser` (BE02R on a machined riser bolted to two holes), the `sample-stage` (MAX311D with a sample on its platform), the `knife-edge` combiner (MRAK25-P01 on a KM100B, pedestal base) and `knife-edge-post` (MRAK25-P01 in a machined holder on a post in a hole), `iris` and `h-iris` (ID25 on a post), `pinhole-target` (one or two pinholes in a plate on a post), `beam-dump` (LB1) and `beam-block`, and a free `laser` beam source. | `catalog/units.py` |
 | **Layers**<br>Bases (post holders, pedestals, forks) and optics (mounts at beam height) are drawn and collision-checked separately. A mount may overhang another unit's base. | `catalog/parts.py` `Layer` |
 | **Placement rules**<br>A PH2 screwed into the table snaps hole to hole, and so does the MAX311D stage (its base's counterbores land on the grid). A pedestal base (PH2+BE1+CF125C) can stand anywhere: its fork swivels automatically to a reachable hole (screw travel 1.054–2.294") while avoiding other bases. | `engine/fork.py` |
-| **Mounting orientations**<br>Choose which tap sits on the post (`F`). The part is rolled about its optic axis, so the top view and post offset change correctly. KM100/KM100BP: bottom or side hole (the side hole mirrors the L-shaped plates). KM100CP: foot or ear tap, with the mirror always over the post. SM1ZB: its only 8-32 hole is in the top edge, so it hangs inverted with the knob up; choose whether the housing faces the fiber or the lens. | `PartSpec.oriented` |
+| **Mounting orientations**<br>Choose which tap sits on the post (`F`). The part is rolled about its optic axis, so the top view and post offset change correctly. KM100/KM100BP/KM200BP: bottom or side hole (the side hole mirrors the L-shaped plates). KM100CP: foot or ear tap, with the mirror always over the post. SM1ZB: its only 8-32 hole is in the top edge, so it hangs inverted with the knob up; choose whether the housing faces the fiber or the lens. | `PartSpec.oriented` |
 | **Illegal placement**<br>Overlaps per layer, a post holder off a hole, no hole within the fork's reach, a base hanging over the edge. The offending parts turn red and the overlap region is hatched. They are also listed in the *Checks* panel. Any problem or beam warning can be **ignored** when you know better: it stays listed (dimmed), stops counting and is saved with the layout. | `engine/validation.py` |
 | **Gaussian beams**<br>A source has a wavelength, waist, waist position, M², power and direction. Beams reflect, split (R/T), focus (thin lens, off-axis steering), and are blocked by mount bodies or clipped by apertures (a beam meeting an optic at incidence i lights a strip 1/cos i wider than itself). Tangential and sagittal q are tracked, so curved mirrors used off-axis are astigmatic. Kinematic mounts have L-shaped plates, so a beam transmitted through a splitter leaves through the open side; if it walks into the mount instead, *Checks* says so and suggests the other orientation. | `optics/` |
 | **Enclosure framing**<br>1/2" T-slot (80/20-style) rails and posts, and enclosure boards, drawn end to end on the canvas. Rails at beam height, posts and boards stop beams; rails lying on the table let them pass over. Framing never collides with itself (corners, boards in slots), only with the rest. | `catalog/units.py` |
@@ -100,7 +100,7 @@ It also shows:
 With nothing selected, it edits the breadboard and the layout notes.
 
 **Lifting a mount off its KB1X1.** Mounts on a KB1X1 magnetic base (the
-pellicle beamsplitter and the `kb-` mirrors) can be lifted off and put back,
+pellicle beamsplitters and the `kb-` mirrors) can be lifted off and put back,
 just like on the table. Press `K`, untick *On its KB1X1* in the Inspector, or
 right-click the part. While a mount is off:
 - it stops reflecting, blocking and colliding, so beams go straight through;
@@ -108,6 +108,26 @@ right-click the part. While a mount is off:
 
 Putting it back restores it exactly. The state is saved in the file as
 `"kb1x1": {"seated": false}` and can be undone.
+
+**Thumbscrew side.** A PH2 screwed into a hole can be turned so its
+thumbscrew points right, left, back or front of the unit (*Thumbscrew* in the
+Inspector, `"post": {"thumbscrew": "left"}` in the file). Crowded neighbours
+then stop colliding on their thumbscrews.
+
+**Pellicle beamsplitters.** Eight units, all 8:92 (R:T) pellicles on a KB1X1
+magnetic base, each on a pedestal base or (`-h-`) on a PH2 in a hole:
+
+| Unit | Pellicle | Mount |
+|---|---|---|
+| `mag-pellicle`, `mag-h-pellicle` | BP108, Ø1″ | BP107 fixed |
+| `mag-km-pellicle`, `mag-km-h-pellicle` | BP108, Ø1″ | KM100BP kinematic |
+| `mag-pellicle-2in`, `mag-h-pellicle-2in` | BP208, Ø2″ | BP207 fixed |
+| `mag-km-pellicle-2in`, `mag-km-h-pellicle-2in` | BP208, Ø2″ | KM200BP kinematic |
+
+The pellicle's ring drops into the mount: onto a lip in the KM100BP / KM200BP
+front plate, or behind the two clamp tabs of the BP107 / BP207 U-shaped
+cradle. The beam meets the 2 µm membrane on the ring's front face. Only the
+split ratio is editable (other BPx0x coatings share the ring).
 
 **Ignoring problems.** The model is simplified, so you may know that a flagged
 overlap or clipped beam is fine. Select entries in the *Checks* panel and press
@@ -149,10 +169,13 @@ beam that should pass straight through, then the beam to reflect onto it.
   - KM100CP: exactly over the post.
   - KMSR: the mirror rests against the holder's back wall, 0.427″ plus the optic thickness in front of the post.
   - FMP1: −0.085″ plus the thickness.
-  - KM100BP: the pellicle membrane (front of the BP108 frame) is 0.77″ in front of the post and 0.05″ off-axis.
+  - KM100BP: the pellicle membrane (front of the BP108 ring) is 0.545″ in front of the post and 0.05″ off-axis.
+  - KM200BP: the membrane (front of the BP208 ring) is 0.59″ in front of the post and 0.045″ off-axis.
+  - BP107 / BP207: the membrane is 0.165″ in front of the post, right over it.
   - Collimator: the fiber tip is 0.20″ in front of the post; the lens sits mid-CP35.
   - Objective: `angle` is the direction it looks. Its nose is 1.05″ in front of the post, and a collimated beam focuses one working distance (7.8 mm) beyond it.
-- The beam expander has no post: its `x, y` is where the input beam meets mirror 1, and `angle` is the input beam's direction.
+- The beam expander has no post: its `x, y` is where the input beam meets mirror 1, and `angle` is the input beam's direction. The same holds on its riser, whose two bolts land on holes when mirror 1 sits on a hole row at a whole-inch x.
+- `knife-edge-post`: `x, y` is the post axis and `angle` the direction the beams leave. The edge is 4.5 mm ahead of the post, so two beams fed along the post's own hole column leave 9.0 mm apart.
 - A rail or board's `x, y` is one end, and it runs `length` along `angle`. A post's `x, y` is its axis.
 - The sample stage's `x, y` is its base centre on the hole grid, and `angle` is the direction the sample faces.
 
@@ -196,11 +219,11 @@ model was checked against the vendor STEP file: cross-sections at beam height
 (which also showed that the KM100-family back plates are L-shaped) and
 overlays of the top-view outlines. A few values are still marked `estimate`
 in `catalog/parts.py`:
-- the BP108 frame thickness, 0.19″ (Thorlabs only gives its Ø1.38″ OD, and it is not in the KM100BP STEP)
 - where the fiber tip sits in the SM1ZB carriage
 - the KB1X1 plate split
 
-The KMSR, M1RMSS and LMM40X-P01 were measured directly on their STEP files.
+The KMSR, M1RMSS, LMM40X-P01 and the pellicle parts (BP107, BP207, BP108,
+BP208, KM200BP) were measured directly on their STEP files.
 
 **Square mirror (KMSR + PFSQ10-03-P01).** The KMSR's holder grips the 1″
 square, 6 mm mirror between two lips, against a solid back wall. It is a
@@ -243,8 +266,9 @@ aperture. A beam whose centre is 1.5 w from the edge keeps 99.9%; at 1.3 w it
 loses 0.5%. The edge sits over the post, and the component's angle is the
 direction the beams leave. Thorlabs shows the prism on a KM100B platform mount
 (1.92″ square); no vendor CAD is registered for either, so they are drawn from
-catalog dimensions, and the KM100B's thicknesses and the prism's height (25 mm)
-are estimates.
+catalog dimensions, and the KM100B's thicknesses are estimates. The prism is
+25 mm tall (its legs are 25 mm × 25 mm faces). `knife-edge-post` holds the
+same prism in a machined holder on a post instead (see below).
 
 **Iris (ID25).** A Ø43.7 mm × 6.6 mm housing standing across the beam, its
 opening set from Ø1 to Ø25 mm. Beams through the opening pass (clipped if it is
@@ -304,8 +328,29 @@ beam, which meets it at 21.7°), so beams over about Ø3.6 mm clip.
 The mirrored version is the same BE02R mounted upside down, so its beam
 path folds the other way. The expander is free-standing (`Mounting.FREE`):
 the app does not model how it is held, by clamps on its flange or the 8-32
-plate on its side. Its sprite shows it with the lid off, so the mirrors are
-visible.
+plate on its side. `beam-expander-riser` holds it by that plate, on a machined
+riser bolted to two table holes. Its sprite shows it with the lid off, so the
+mirrors are visible.
+
+## Custom machined parts
+
+Four simple parts make the two-beam layout (v3) mount from the hole grid. They
+are modeled like the Thorlabs parts, and their shop drawings are generated
+from the same constants, so a drawing cannot drift from the simulated part:
+
+```
+python -m olayout.tools.drawings        # writes docs/drawings/*.svg
+```
+
+| Part | Unit | Drawing |
+|---|---|---|
+| BE02R riser: an L-block that sets the BE02R's beam height and bolts to two holes | `beam-expander-riser` | `docs/drawings/be02r-riser.svg` |
+| Knife-edge holder: the MRAK25's edge 4.5 mm ahead of the post | `knife-edge-post` | `docs/drawings/knife-edge-holder.svg` |
+| Beam block, 1″ × 1″ × 3/8″ | `beam-block` | `docs/drawings/beam-block.svg` |
+| Dual-pinhole alignment target | `pinhole-target` | `docs/drawings/dual-pinhole-target.svg` |
+
+`docs/custom-parts.md` covers what to check before machining and how each
+part is used.
 
 ## CAD sprites
 
@@ -342,14 +387,16 @@ olayout/
   render/     top-down rasterizer (primitives + CAD meshes), shading, sprite caches, CAD import
   ui/         theme, document (undo/selection/analysis), canvas (scene, view, items, tools),
               panels (library, inspector, beams, checks), main window, start-up warm-up
-  tools/      developer tools: cad_inspect (register a CAD file), bake_sprites
+  tools/      developer tools: cad_inspect (register a CAD file), bake_sprites,
+              drawings (shop drawings of the custom parts)
 assets/
   cad/       CAD registry (cad_parts.json); the vendor STEP files themselves are not committed
   sprites/   committed top-down sprites rendered from those files
 tests/        engine, optics, file format, rendering, CAD, and headless UI tests
 examples/     demo.olayout.json
-docs/         alignment procedure and co-alignment methods for the two-beam layout
-              (breadboard-optimized.olayout.json)
+docs/         the two-beam layout: alignment procedure and co-alignment methods
+              (breadboard-optimized.olayout.json), the v3 layout (v3-layout.md),
+              custom parts and their drawings (custom-parts.md, drawings/)
 ```
 
 ## Limitations

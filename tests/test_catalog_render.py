@@ -35,7 +35,8 @@ def test_unit_builds_with_defaults(type_id):
             assert placed.footprints[Layer.BASE].area > 0
         if type_id != "base":
             assert placed.footprints[Layer.OPTIC].area > 0
-            assert placed.build.blockers if unit.structural else placed.build.elements  # framing stops beams
+            stops_only = unit.structural or unit.category == "Beam dumps"  # framing and dumps stop beams
+            assert placed.build.blockers if stops_only else placed.build.elements
 
 
 def test_mount_bore_is_open_at_beam_height():

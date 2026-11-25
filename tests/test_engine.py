@@ -653,3 +653,62 @@ def test_iris_passes_its_opening_and_stops_the_rest(type_id):
     beam.y = 5.5 + 15.0 * MM  # beyond the housing's bore: the housing stops it
     (seg,) = analyze(layout).trace.segments
     assert seg.end_event == "blocked" and seg.end_owner == iris.id
+
+
+PELLICLE_UNITS = {
+    # unit id: (mount, ring)
+    "mag-km-pellicle": ("KM100BP", "BP108"),
+    "mag-km-h-pellicle": ("KM100BP", "BP108"),
+    "mag-pellicle": ("BP107", "BP108"),
+    "mag-h-pellicle": ("BP107", "BP108"),
+    "mag-km-pellicle-2in": ("KM200BP", "BP208"),
+    "mag-km-h-pellicle-2in": ("KM200BP", "BP208"),
+    "mag-pellicle-2in": ("BP207", "BP208"),
+    "mag-h-pellicle-2in": ("BP207", "BP208"),
+}
+
+
+@pytest.mark.parametrize("type_id", sorted(PELLICLE_UNITS))
+def test_magnetic_pellicle_units(type_id):
+    """Each pellicle mount on a KB1X1, on a pedestal or in a hole, splits 8:92 at
+    the membrane on its ring's front face, and lifts off inert."""
+    mount_id, ring_id = PELLICLE_UNITS[type_id]
+    layout = Layout()
+    bs = make_component(layout, type_id, 8.5, 5.5, angle=135.0)  # post on a hole
+    result = analyze(layout)
+    build = result.units[bs.id].build
+    parts = {p.part_id: p for p in build.parts}
+    hole = "-h-" in type_id
+    assert {mount_id, ring_id, "KB1X1", "PH2" if hole else "PH2@BE1"} <= set(parts)
+    assert ("BE1" in parts) is not hole
+    # The ring sits on the mount's optic slot, the beam acting on its front face.
+    element = build.elements[0]
+    assert element.center == pytest.approx((parts[ring_id].pose.x, parts[ring_id].pose.y), abs=1e-4)  # (2 µm film)
+    assert 2 * element.half_aperture == pytest.approx(P.PELLICLE_MOUNTS[mount_id].diameter)
+    cx, cy = optic_center(result, bs)
+    make_component(layout, "laser", 2.0, cy)
+    result = analyze(layout)
+    assert result.issues == [] and result.trace.warnings == []
+    children = [s for s in result.trace.segments if s.parent == 0]
+    assert sorted(round(s.state.power, 6) for s in children) == [0.08, 0.92]
+    assert all(s.end_event == "escaped" for s in children)  # both beams leave clear of the mount
+
+    bs.params["kb1x1"]["seated"] = False
+    lifted = analyze(layout)
+    assert lifted.trace.segments[0].end_event == "escaped"
+    assert {mount_id, ring_id} <= {p.part_id for p in lifted.units[bs.id].build.detached_parts}
+
+
+def test_pellicle_seats_measured_on_the_step_files():
+    # The ring (3/16" thick) drops onto the KM100BP's lip, 0.03" below the front face.
+    assert P.PELLICLE_FRAME_T == pytest.approx(0.1875)
+    assert P.PELLICLE_PLANE_X == pytest.approx(0.5445)
+    assert P.KM100BP_FRONT_X - P.PELLICLE_PLANE_X == pytest.approx(0.0275)
+    # The BP107 cradle holds the membrane 0.95" above its tap, 0.165" in front of the post.
+    tap = PARTS["BP107"].tap(None)
+    assert tap.position == pytest.approx((-0.165, 0.0, -0.9492))
+    assert PARTS["BP207"].tap(None).position[2] == pytest.approx(-1.4512)
+    # The KM200BP: pellicle 1.605" from its bottom and +y faces, taps 1.56" from them.
+    bottom, side = PARTS["KM200BP"].taps
+    assert bottom.position[1:] == pytest.approx((0.045, -1.605))
+    assert side.position[1:] == pytest.approx((1.605, -0.045))

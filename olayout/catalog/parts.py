@@ -264,65 +264,205 @@ def make_km100cp() -> PartSpec:
     )
 
 
-KM100BP_FRONT_X = 0.58  # front face of the KM100BP, where the pellicle frame mounts
-BP108_FRAME_T = 0.19  # estimate: BP108 frame thickness (Thorlabs gives OD Ø1.38", membrane Ø1")
-PELLICLE_PLANE_X = KM100BP_FRONT_X + BP108_FRAME_T  # the membrane, where the beam hits
-
-
-def make_km100bp() -> PartSpec:
-    """L-shaped kinematic mount for Ø1" pellicles (KM100BP drawing rev A + STEP).
-
-    Both plates are L-brackets along the +y side and the bottom (front arms
-    0.31" wide, back arms 0.48"), so the region around the beam is open.  The
-    pellicle centre is 1.05" from the bottom and from the +y face; the #8
-    holes are 1.00" from those faces.  The pellicle itself is the separate
-    BP108 part (its frame screws to the front face).
-    """
-    y_out, z_low = 1.05, -1.05  # back plate's outer +y face and bottom face
-    z_top = z_low + 1.97
-    back_y = (y_out - 1.97, y_out)
-    front = _l_plate((0.29, KM100BP_FRONT_X), (back_y[0] + 0.03, y_out - 0.05), (z_low, z_top - 0.03), 0.31, "anodized")
-    knobs = ((0.785, 0.70), (-0.70, -0.785))  # at the ends of the arms
-    prims = _kinematic_body(
-        front=front, back_x=(-0.20, 0.20), back_y=back_y, plate_z=(z_low, z_top), front_x0=0.29, knobs=knobs
-    )
-    taps = (
-        MountingTap("bottom", "Upright (bottom hole)", (0.0, y_out - 1.00, z_low), (0, 0, -1)),
-        MountingTap("side", "On its side (side hole, mirrored)", (0.0, y_out, z_low + 1.00), (0, 1, 0)),
-    )
-    return PartSpec(
-        id="KM100BP",
-        name='KM100BP kinematic pellicle mount, Ø1"',
-        layer=Layer.OPTIC,
-        prims=tuple(prims),
-        taps=taps,
-        optic_slot=OpticSlot(seat_x=PELLICLE_PLANE_X, loading="centered", clear_aperture=1.00),
-        description="Kinematic mount for Ø1\" pellicle beamsplitters (BP108).",
-    )
-
-
+# ==========================================================================
+# Pellicle beamsplitters and their mounts (vendor STEP files)
+# ==========================================================================
+# A BP108 (Ø1") or BP208 (Ø2") pellicle is a 2 µm membrane stretched over the
+# front face of a 3/16"-thick ring.  The ring drops into a mount: the KM100BP /
+# KM200BP kinematic mounts (a counterbore in the front plate, on a lip) or the
+# BP107 / BP207 fixed cradles (a U whose two front tabs clamp the ring).  The
+# beam meets the membrane, on the ring's front face.
+PELLICLE_FRAME_T = 0.1875  # BP108 / BP208 ring thickness (STEP)
 BP108_REFLECTANCE = 0.08  # 8:92 uncoated pellicle, 400-2400 nm
 
 
-def make_bp108() -> PartSpec:
-    """BP108 pellicle beamsplitter (8:92): 2 µm membrane on a Ø1.38" frame.
+@dataclass(frozen=True)
+class PellicleSpec:
+    """A pellicle ring: its part id, outer radius and membrane (clear) radius."""
 
-    Origin = membrane centre, on the frame's front face; the frame extends
-    behind it (toward -x) onto the KM100BP.  The beam is normally incident on
-    the membrane side.
-    """
-    t = BP108_FRAME_T
+    part_id: str
+    outer_radius: float
+    membrane_radius: float
+
+    @property
+    def diameter(self) -> float:
+        return 2 * self.membrane_radius
+
+
+BP108 = PellicleSpec("BP108", 0.69, 0.50)  # Ø1.38" ring, Ø1" membrane
+BP208 = PellicleSpec("BP208", 1.19, 1.00)  # Ø2.38" ring, Ø2" membrane
+
+
+def _make_pellicle(spec: PellicleSpec, name: str) -> PartSpec:
+    """Origin = membrane centre, on the ring's front face; the ring extends
+    behind it (toward -x) into the mount."""
+    t = PELLICLE_FRAME_T
     prims = (
-        Cylinder("x", (-t / 2, 0.0, 0.0), 0.69, t, "anodized"),
-        Bore("x", (-t / 2, 0.0, 0.0), 0.50, t + 0.1),  # Ø1" membrane
+        Cylinder("x", (-t / 2, 0.0, 0.0), spec.outer_radius, t, "anodized"),
+        Bore("x", (-t / 2, 0.0, 0.0), spec.membrane_radius, t + 0.1),
     )
     return PartSpec(
-        id="BP108",
-        name='BP108 pellicle beamsplitter, Ø1", 8:92',
+        id=spec.part_id,
+        name=name,
         layer=Layer.OPTIC,
         prims=prims,
-        description="Uncoated 8:92 pellicle (2 µm membrane) on a Ø1.38\" frame.",
+        description=f"Uncoated 8:92 pellicle (2 µm membrane) on a Ø{2 * spec.outer_radius:.2f}\" ring.",
     )
+
+
+def make_bp108() -> PartSpec:
+    return _make_pellicle(BP108, 'BP108 pellicle beamsplitter, Ø1", 8:92')
+
+
+def make_bp208() -> PartSpec:
+    return _make_pellicle(BP208, 'BP208 pellicle beamsplitter, Ø2", 8:92')
+
+
+@dataclass(frozen=True)
+class KinematicPellicleMount:
+    """An L-shaped KM100BP-style mount, measured on its STEP file.
+
+    Part frame: origin on the pellicle axis, at the depth of the 8-32 taps
+    (mid back plate).  Both plates are L-brackets along the bottom and the +y
+    side, so the region around the beam stays open.
+    """
+
+    part_id: str
+    pellicle: PellicleSpec
+    inset: float  # pellicle axis from the bottom and from the +y face
+    tap_inset: float  # 8-32 taps from those faces
+    size: float  # back plate, square
+    back_x: tuple[float, float]
+    front_x: tuple[float, float]
+    front_arm: float
+    seat_x: float  # the lip the ring sits on
+    knobs: tuple[tuple[float, float], ...]  # (y, z) of the two adjusters
+    knob_standoff: float = 0.0  # extra screw length behind the back plate before the knob
+
+    @property
+    def membrane_x(self) -> float:
+        return self.seat_x + PELLICLE_FRAME_T
+
+
+# KM100BP rev A + STEP: lip at x 0.293..0.357, ring recessed 0.03" below the face.
+KM100BP_SPEC = KinematicPellicleMount(
+    "KM100BP", BP108, inset=1.05, tap_inset=1.00, size=1.97, back_x=(-0.20, 0.20), front_x=(0.29, 0.572),
+    front_arm=0.31, seat_x=0.357, knobs=((0.785, 0.70), (-0.70, -0.785)),
+)
+# KM200BP STEP: pellicle axis 1.605" from both faces, taps 0.045" closer; the
+# 1/4"-80 adjusters stand 0.13" further back than on the KM100BP.
+KM200BP_SPEC = KinematicPellicleMount(
+    "KM200BP", BP208, inset=1.605, tap_inset=1.56, size=3.01, back_x=(-0.20, 0.17), front_x=(0.35, 0.74),
+    front_arm=0.42, seat_x=0.405, knobs=((1.295, 1.155), (-1.155, -1.295)), knob_standoff=0.13,
+)
+# Kept for code that refers to the KM100BP's membrane plane.
+KM100BP_FRONT_X = KM100BP_SPEC.front_x[1]
+PELLICLE_PLANE_X = KM100BP_SPEC.membrane_x
+
+
+def _make_kinematic_pellicle_mount(spec: KinematicPellicleMount, name: str) -> PartSpec:
+    y_out, z_low = spec.inset, -spec.inset  # outer +y face and bottom face
+    z_top = z_low + spec.size
+    back_y = (y_out - spec.size, y_out)
+    x0, x1 = spec.front_x
+    front = _l_plate((x0, x1), (back_y[0] + 0.03, y_out - 0.05), (z_low, z_top - 0.03), spec.front_arm, "anodized")
+    back_x = spec.back_x[0] - spec.knob_standoff
+    prims = _kinematic_body(
+        front=front, back_x=spec.back_x, back_y=back_y, plate_z=(z_low, z_top), front_x0=x0, knobs=()
+    )
+    for y, z in spec.knobs:
+        if spec.knob_standoff:
+            standoff = Cylinder("x", (spec.back_x[0] - spec.knob_standoff / 2, y, z), 0.125, spec.knob_standoff, "brass")
+            prims.append(standoff)
+        prims += _adjuster(y, z, back_x)
+    taps = (
+        MountingTap("bottom", "Upright (bottom hole)", (0.0, y_out - spec.tap_inset, z_low), (0, 0, -1)),
+        MountingTap("side", "On its side (side hole, mirrored)", (0.0, y_out, z_low + spec.tap_inset), (0, 1, 0)),
+    )
+    size = spec.pellicle.diameter
+    return PartSpec(
+        id=spec.part_id,
+        name=name,
+        layer=Layer.OPTIC,
+        prims=tuple(prims),
+        taps=taps,
+        optic_slot=OpticSlot(seat_x=spec.membrane_x, loading="centered", diameter=size, clear_aperture=size),
+        description=f'Kinematic mount for Ø{size:g}" pellicle beamsplitters ({spec.pellicle.part_id}).',
+    )
+
+
+def make_km100bp() -> PartSpec:
+    return _make_kinematic_pellicle_mount(KM100BP_SPEC, 'KM100BP kinematic pellicle mount, Ø1"')
+
+
+def make_km200bp() -> PartSpec:
+    return _make_kinematic_pellicle_mount(KM200BP_SPEC, 'KM200BP kinematic pellicle mount, Ø2"')
+
+
+@dataclass(frozen=True)
+class PellicleCradle:
+    """A BP107 / BP207 fixed pellicle mount, measured on its STEP file.
+
+    A U-shaped cradle, 0.45" thick along the beam, open at the top.  The ring
+    rests on a ledge and two front tabs clamp it, so the membrane sits 0.085"
+    behind the cradle's front face.  Its 8-32 tap is in the bottom, under the
+    pellicle, 0.165" behind the membrane.  Part frame: origin on the membrane.
+    """
+
+    part_id: str
+    pellicle: PellicleSpec
+    height: float  # pellicle axis above the bottom face
+    inner_radius: float
+    outer_radius: float
+    arc_top: float  # the U's arms end this far above the axis
+
+    front_x = 0.085
+    back_x = -0.365
+    tap_x = -0.165
+
+
+BP107_SPEC = PellicleCradle("BP107", BP108, height=0.9492, inner_radius=0.715, outer_radius=0.843, arc_top=0.12)
+BP207_SPEC = PellicleCradle("BP207", BP208, height=1.4512, inner_radius=1.213, outer_radius=1.340, arc_top=0.12)
+
+
+def _make_pellicle_cradle(spec: PellicleCradle, name: str) -> PartSpec:
+    x0, x1 = spec.back_x, spec.front_x
+    r_in, r_out = spec.inner_radius, spec.outer_radius
+    bottom = -r_in  # where the U's inner curve bottoms out
+    prims: list[Primitive] = [
+        # The two arms, straight up the sides (the curve is drawn by the CAD sprite).
+        Box((x0, r_in, -0.7 * r_in), (x1, r_out, spec.arc_top), "anodized"),
+        Box((x0, -r_out, -0.7 * r_in), (x1, -r_in, spec.arc_top), "anodized"),
+        # The bottom of the U, narrowing toward the foot.
+        Box((x0, -0.72 * r_out, bottom - 0.06), (x1, 0.72 * r_out, -0.7 * r_in), "anodized"),
+        Box((x0, -0.3 * r_out, -spec.height), (x1, 0.3 * r_out, bottom - 0.06), "anodized"),
+    ]
+    taps = (MountingTap("bottom", "Upright (bottom tap)", (spec.tap_x, 0.0, -spec.height), (0, 0, -1)),)
+    size = spec.pellicle.diameter
+    return PartSpec(
+        id=spec.part_id,
+        name=name,
+        layer=Layer.OPTIC,
+        prims=tuple(prims),
+        taps=taps,
+        optic_slot=OpticSlot(seat_x=0.0, loading="centered", diameter=size, clear_aperture=size),
+        description=f'Fixed mount for Ø{size:g}" pellicle beamsplitters ({spec.pellicle.part_id}); 8-32 tap '
+        "under the pellicle.",
+    )
+
+
+def make_bp107() -> PartSpec:
+    return _make_pellicle_cradle(BP107_SPEC, 'BP107 fixed pellicle mount, Ø1"')
+
+
+def make_bp207() -> PartSpec:
+    return _make_pellicle_cradle(BP207_SPEC, 'BP207 fixed pellicle mount, Ø2"')
+
+
+# Each pellicle mount and the ring it holds.
+PELLICLE_MOUNTS: dict[str, PellicleSpec] = {
+    "KM100BP": BP108, "KM200BP": BP208, "BP107": BP108, "BP207": BP208,
+}
 
 
 # ==========================================================================
@@ -1101,6 +1241,142 @@ def make_id25() -> PartSpec:
 
 
 # ==========================================================================
+# Custom machined parts (drawings in docs/custom-parts.md)
+# ==========================================================================
+# BE02R riser: an L-shaped aluminium block that puts the BE02R's axis at beam
+# height and fixes its position.  The BE02R stands on the riser and bolts
+# through the four 8-32 holes of its side plate to the riser's wall; the riser
+# bolts to the table with two 1/4"-20 screws in counterbores under the BE02R.
+# Frame: the BE02R's (origin where the input axis meets mirror 1, at beam
+# height; x along the input beam).  With mirror 1 on a whole-inch x and the
+# input on a hole row, both bolts land on table holes.
+RISER_WALL_Y = (0.9055, 1.2805)  # the wall the side plate bolts to (its face, then 0.375" of aluminium)
+RISER_WALL_X = (-1.35, 0.55)
+RISER_WALL_TOP = 0.616  # 1.600" above the riser's top face
+RISER_SIDE_HOLES = ((-0.894, -0.646), (0.106, -0.646), (-0.894, 0.354), (0.106, 0.354))  # 8-32 in the side plate (x, z)
+RISER_OUTLINE = ((-1.65, -1.7195), (1.10, -1.7195), (1.10, 1.2805), (-1.65, 1.2805))  # 2.750" x 3.000"
+RISER_BOLTS = ((-0.5, -1.0), (0.5, -1.0))  # 1/4"-20 counterbored, under the BE02R
+RISER_NOMINAL_H = 2.0  # drawn height; the real one is h - 25.0 mm (h = beam height above the table)
+
+
+def make_be02r_riser() -> PartSpec:
+    return PartSpec(
+        id="BE02R-RISER",
+        name="BE02R riser (custom)",
+        layer=Layer.BASE,
+        prims=(Prism(RISER_OUTLINE, 0.0, RISER_NOMINAL_H, "anodized_light"),),
+        description="Machined riser: puts the BE02R's axis at beam height and registers it on two 1/4\"-20 holes.",
+    )
+
+
+def make_be02r_riser_wall() -> PartSpec:
+    (x0, x1), (y0, y1) = RISER_WALL_X, RISER_WALL_Y
+    return PartSpec(
+        id="BE02R-RISER-WALL",
+        name="BE02R riser wall (custom)",
+        layer=Layer.OPTIC,
+        prims=(Box((x0, y0, BE02R_BOTTOM), (x1, y1, RISER_WALL_TOP), "anodized_light"),),
+        description="The riser's wall: the BE02R's side plate bolts to it with four 8-32 screws.",
+    )
+
+
+# Knife-edge holder: the MRAK25's hypotenuse face rests against a fence and a
+# clamp plate holds its top; its edge is KNIFE_EDGE_LEAD ahead of the post axis.
+# Two beams fed along the post's column (one from each side) then meet the
+# legs 2 x KNIFE_EDGE_LEAD apart and leave side by side, 9.0 mm apart.
+KNIFE_EDGE_LEAD = 4.5 / 25.4
+KEH_FENCE_X = KNIFE_EDGE_LEAD - MRAK25_LEG / math.sqrt(2)  # the fence face = the prism's hypotenuse, behind the post
+KEH_BASE_T = 0.375
+KEH_BASE_LENGTH = 1.000  # from the fence's back to the base's front, past the edge
+KEH_FENCE_T = 0.25
+KEH_FENCE_CLEARANCE = 0.031  # the fence stands this much above the prism; the setscrew reaches down to it
+KEH_HALF_WIDTH = 0.55  # the prism's back corners overhang the fence a little
+KEH_CLAMP = (0.47, 0.80, 0.125)  # clamp plate on the fence: length from the fence's back, width, thickness
+KEH_SETSCREW_X = 0.12  # the nylon-tipped setscrew, this far in front of the fence face
+
+
+def make_knife_edge_holder() -> PartSpec:
+    """Frame: origin on the post axis at beam height; +x is where the beams leave."""
+    half, w, back = MRAK25_HEIGHT / 2, KEH_HALF_WIDTH, KEH_FENCE_X
+    rear = back - KEH_FENCE_T
+    bottom = -half - KEH_BASE_T
+    top = half + KEH_FENCE_CLEARANCE
+    clamp_length, clamp_width, clamp_t = KEH_CLAMP
+    prims: list[Primitive] = [
+        Box((rear, -w, bottom), (rear + KEH_BASE_LENGTH, w, -half), "anodized"),  # base, under the prism
+        Box((rear, -w, -half), (back, w, top), "anodized"),  # fence behind the hypotenuse
+        Box((rear, -clamp_width / 2, top), (rear + clamp_length, clamp_width / 2, top + clamp_t), "anodized_light"),
+        Cylinder("z", (back + KEH_SETSCREW_X, 0.0, top + clamp_t / 2), 0.07, 0.08, "steel_dark"),  # setscrew
+    ]
+    return PartSpec(
+        id="KEH",
+        name="Knife-edge holder for MRAK25 (custom)",
+        layer=Layer.OPTIC,
+        prims=tuple(prims),
+        taps=(MountingTap("bottom", "Upright (bottom tap)", (0.0, 0.0, bottom), (0, 0, -1)),),
+        description="Machined holder: fence + clamp plate; the knife edge 4.5 mm ahead of the 8-32 post tap.",
+    )
+
+
+# Beam block (custom): a black-anodized aluminium block on an 8-32 post, for
+# milliwatt strays where an LB1 does not fit.  3/8" thick so its bottom edge
+# takes the 8-32 tap.  Turned ~20° from square so its weak specular
+# reflection goes into the table.  Frame: origin on the post axis, the face
+# toward +x.
+BEAM_BLOCK = ((-0.1875, -0.50, -0.60), (0.1875, 0.50, 0.40))
+
+
+def make_beam_block() -> PartSpec:
+    lo, hi = BEAM_BLOCK
+    return PartSpec(
+        id="BLOCK",
+        name="Beam block plate (custom)",
+        layer=Layer.OPTIC,
+        prims=(Box(lo, hi, "anodized"),),
+        taps=(MountingTap("bottom", "Upright (bottom tap)", (0.0, 0.0, lo[2]), (0, 0, -1)),),
+        description='Black-anodized block, 1.0" x 1.0" x 3/8", 8-32 tap in its bottom edge.',
+    )
+
+
+# Alignment target (custom): a 3/8"-thick aluminium plate, 1.6" wide, on an
+# 8-32 post, with one or two small pinholes drilled through a thin web left by
+# counterbores from the back.  Two pinholes check two beams that run side by
+# side (e.g. after the knife edge).  Frame: origin on the post axis at beam
+# height; the beams cross the plate along x.
+TARGET_PLATE = ((-0.1875, -0.80, -0.60), (0.1875, 0.80, 0.50))
+
+
+def make_target_plate() -> PartSpec:
+    lo, hi = TARGET_PLATE
+    return PartSpec(
+        id="TARGET",
+        name="Pinhole alignment target (custom)",
+        layer=Layer.OPTIC,
+        prims=(Box(lo, hi, "anodized"),),
+        taps=(MountingTap("bottom", "Upright (bottom tap)", (0.0, 0.0, lo[2]), (0, 0, -1)),),
+        description='Aluminium plate, 1.6" x 1.1" x 3/8", with one or two pinholes on the beam line.',
+    )
+
+
+# Beam dump: Thorlabs LB1 (1.4" x 0.7" aperture, 10 W CW) on its Ø1/2" post.
+# Its outer dimensions are estimates.  Frame: origin on the post axis, the
+# aperture facing +x (toward the beam).
+LB1_BODY = ((-1.00, -0.95, -0.70), (0.10, 0.95, 0.70))  # estimate
+
+
+def make_lb1() -> PartSpec:
+    lo, hi = LB1_BODY
+    return PartSpec(
+        id="LB1",
+        name="LB1 beam dump (outer dimensions estimated)",
+        layer=Layer.OPTIC,
+        prims=(Box(lo, hi, "anodized"),),
+        taps=(MountingTap("bottom", "Upright (bottom tap)", (0.0, 0.0, lo[2]), (0, 0, -1)),),
+        description='Beam dump, 1.4" x 0.7" aperture, 10 W CW, on a Ø1/2" post.',
+    )
+
+
+# ==========================================================================
 # Registry
 # ==========================================================================
 def _build_registry() -> dict[str, PartSpec]:
@@ -1108,7 +1384,11 @@ def _build_registry() -> dict[str, PartSpec]:
         make_km100(),
         make_km100cp(),
         make_km100bp(),
+        make_km200bp(),
+        make_bp107(),
+        make_bp207(),
         make_bp108(),
+        make_bp208(),
         make_kmsr(),
         make_fmp1(),
         make_kb1x1(),
@@ -1133,6 +1413,12 @@ def _build_registry() -> dict[str, PartSpec]:
         make_mrak25(),
         make_km100b(),
         make_id25(),
+        make_be02r_riser(),
+        make_be02r_riser_wall(),
+        make_knife_edge_holder(),
+        make_lb1(),
+        make_beam_block(),
+        make_target_plate(),
     ]
     return {part.id: part for part in parts}
 

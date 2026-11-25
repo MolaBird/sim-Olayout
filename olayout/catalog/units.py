@@ -20,6 +20,7 @@ from typing import Any, Callable
 
 import numpy as np
 import shapely
+from shapely.affinity import translate
 from shapely.geometry import Polygon, box
 
 from olayout.catalog import parts as P
@@ -386,7 +387,7 @@ def _optic_elements(
     return [element], blockers, [visual]
 
 
-PELLICLE_MOUNTS = frozenset({"KM100BP"})
+PELLICLE_MOUNTS = P.PELLICLE_MOUNTS  # mount id -> the pellicle ring it holds
 PELLICLE_THICKNESS = 2e-6 / 0.0254  # ~2 µm nitrocellulose membrane
 
 
@@ -424,11 +425,29 @@ def _mount_on_post(part_id: str, tap_name: str | None) -> tuple[PlacedPart, Pose
     return placed, pose
 
 
-THUMBSCREW_ANGLE = 180.0  # PH2 thumbscrew points to the unit's -y side
+THUMBSCREW_ANGLE = 180.0  # by default the PH2 thumbscrew points to the unit's -y side
+# A post holder screwed into a hole can be turned so its thumbscrew faces any
+# side; looking along the component's angle, "right" is the unit's -y side.
+THUMBSCREW_SIDES = (("right", "Right"), ("left", "Left"), ("back", "Back"), ("front", "Front"))
+_THUMBSCREW_TURN = {"right": THUMBSCREW_ANGLE, "left": 0.0, "back": 90.0, "front": -90.0}
+THUMBSCREW_FIELD = ParamField(
+    "post.thumbscrew",
+    "Thumbscrew",
+    "choice",
+    "right",
+    choices=THUMBSCREW_SIDES,
+    tooltip="Which side of the post holder its thumbscrew faces, looking along the component's angle",
+)
 
 
-def _post_holder_parts(on_pedestal: bool) -> list[PlacedPart]:
-    return [_placed("PH2@BE1" if on_pedestal else "PH2", Pose(0, 0, THUMBSCREW_ANGLE))]
+def _thumbscrew(comp: Component | None) -> str:
+    side = get_param(comp.params, THUMBSCREW_FIELD.key, "right") if comp is not None else "right"
+    return side if side in _THUMBSCREW_TURN else "right"
+
+
+def _post_holder_parts(on_pedestal: bool, thumbscrew: str = "right") -> list[PlacedPart]:
+    turn = THUMBSCREW_ANGLE if on_pedestal else _THUMBSCREW_TURN[thumbscrew]
+    return [_placed("PH2@BE1" if on_pedestal else "PH2", Pose(0, 0, turn))]
 
 
 def default_fork() -> ForkPlacement:
@@ -497,12 +516,13 @@ def build_post_mounted_optic(
     unit: UnitType, comp: Component, *, mount_id: str, adapter_id: str | None, default_kind: OpticKind
 ) -> UnitBuild:
     pedestal = unit.mounting is Mounting.PEDESTAL
-    parts: list[PlacedPart] = _pedestal_parts() if pedestal else _post_holder_parts(False)
+    parts: list[PlacedPart] = _pedestal_parts() if pedestal else _post_holder_parts(False, _thumbscrew(comp))
     mount, mount_pose = _mount_on_post(mount_id, comp.orientation or None)
     carried = [mount]  # what sits on the adapter (and comes off with a KB1X1's top plate)
     if mount_id in PELLICLE_MOUNTS and _optic_kind(comp.params, default_kind) is not OpticKind.NONE:
-        # The pellicle's own frame sits on the mount's front face.
-        carried.append(_placed("BP108", mount_pose.compose(Pose(P.PELLICLE_PLANE_X, 0.0, 0.0))))
+        # The pellicle's own ring sits in the mount, its membrane on the optic slot's plane.
+        membrane = Pose(get_part(mount_id).optic_slot.seat_x, 0.0, 0.0)
+        carried.append(_placed(PELLICLE_MOUNTS[mount_id].part_id, mount_pose.compose(membrane)))
     if adapter_id:
         # Adapter (e.g. KB1X1) sits on the post directly under the mount's tap.
         mount_tap_z = get_part(mount_id).oriented(comp.orientation or None).tap_z
@@ -540,6 +560,21 @@ def build_beam_expander(unit: UnitType, comp: Component, *, mirrored: bool) -> U
     """
     flip = -1.0 if mirrored else 1.0
     parts = [_placed("BE02R", Pose(), roll=rotation_matrix("x", 180) if mirrored else None)]
+    elements, visuals = _be02r_optics(comp.label, flip)
+    side = "right" if mirrored else "left"
+    notes = (*_be02r_notes()[:1], f"The beam leaves {P.BE02R_EXIT_ANGLE:.1f}° to the {side} of its input direction",
+             *_be02r_notes()[1:])
+    return UnitBuild(
+        parts=tuple(parts),
+        elements=tuple(elements),
+        blockers=tuple(_beam_blockers(parts)),
+        optic_visuals=tuple(visuals),
+        notes=notes,
+    )
+
+
+def _be02r_optics(label: str, flip: float) -> tuple[list[OpticalElement], list[OpticVisual]]:
+    """The BE02R's two mirrors (``flip`` = -1: the expander upside down)."""
     elements, visuals = [], []
     for index, mirror in enumerate(P.BE02R_MIRRORS, start=1):
         x, y = mirror.center
@@ -554,21 +589,35 @@ def build_beam_expander(unit: UnitType, comp: Component, *, mirrored: bool) -> U
                 half_aperture=(hi - lo) / 2,
                 aperture_offset=offset,
                 roc=mirror.roc,
-                name=f"{comp.label} mirror {index}".strip(),
+                name=f"{label} mirror {index}".strip(),
             )
         )
         tangent = math.radians(angle + 90.0)
         centre = Pose(x + offset * math.cos(tangent), y * flip + offset * math.sin(tangent), angle)
         visuals.append(OpticVisual(OpticKind.MIRROR, centre, hi - lo, mirror.thickness, 1 if mirror.roc > 0 else -1))
-    side = "right" if mirrored else "left"
+    return elements, visuals
+
+
+def _be02r_notes() -> tuple[str, str]:
     first, second = P.BE02R_MIRRORS
     edge = min(-first.aperture[0], first.aperture[1])  # mirror 1's edge nearest the beam axis
     across = edge * abs(math.cos(math.radians(first.normal_angle)))  # as the obliquely incident beam sees it
-    notes = (
+    return (
         f"2X: convex R {-first.roc / MM:.1f} mm, then concave R {second.roc / MM:.0f} mm",
-        f"The beam leaves {P.BE02R_EXIT_ANGLE:.1f}° to the {side} of its input direction",
         # A Gaussian loses 1% past an edge 1.645 w / √2 from its centre.
         f"Mirror 1's edge is {edge / MM:.1f} mm from the axis: beams over ~Ø{2 * math.sqrt(2) * across / 1.645 / MM:.1f} mm clip",
+    )
+
+
+def build_beam_expander_riser(unit: UnitType, comp: Component) -> UnitBuild:
+    """BE02R (upright) on its custom riser: the same optics as the free-standing
+    expander, but its position is fixed by the riser's two bolts in table holes."""
+    parts = [_placed("BE02R-RISER"), _placed("BE02R-RISER-WALL"), _placed("BE02R")]
+    elements, visuals = _be02r_optics(comp.label, 1.0)
+    notes = (
+        f"The beam leaves {P.BE02R_EXIT_ANGLE:.1f}° to the left of its input direction",
+        *_be02r_notes(),
+        "Custom riser: height = beam height - 25.0 mm; drawing in docs/custom-parts.md",
     )
     return UnitBuild(
         parts=tuple(parts),
@@ -798,21 +847,7 @@ def build_objective(unit: UnitType, comp: Component) -> UnitBuild:
 # allow.  A beam's centre should stay 1.5 w from the edge (1.3 w loses 0.5%).
 def build_knife_edge(unit: UnitType, comp: Component) -> UnitBuild:
     parts = [*_pedestal_parts(), _placed("KM100B"), _placed("MRAK25")]
-    reach = P.MRAK25_LEG / math.sqrt(2)  # each leg runs back this far, and as far to its side
-    elements, visuals = [], []
-    for side, sign in (("left", 1.0), ("right", -1.0)):  # as seen looking along the output
-        centre = (-reach / 2, sign * reach / 2)
-        normal = 45.0 * sign  # each leg turns a beam coming from its side toward +x
-        elements.append(
-            OpticalElement(
-                kind=OpticKind.MIRROR,
-                center=centre,
-                normal_angle=normal,
-                half_aperture=P.MRAK25_LEG / 2,
-                name=f"{comp.label} {side} leg".strip(),
-            )
-        )
-        visuals.append(OpticVisual(OpticKind.MIRROR, Pose(*centre, normal), P.MRAK25_LEG, 0.012))
+    elements, visuals = _knife_edge_legs(comp.label, 0.0)
     # The glass behind the silvered legs, kept just behind them so the legs themselves reflect.
     glass = Polygon(P.mrak25_outline()).buffer(-0.003, join_style="mitre")
     holder = [p for p in parts if p.part_id != "MRAK25"]
@@ -828,6 +863,89 @@ def build_knife_edge(unit: UnitType, comp: Component) -> UnitBuild:
         optic_visuals=tuple(visuals),
         notes=notes,
     )
+
+
+def _knife_edge_legs(label: str, lead: float) -> tuple[list[OpticalElement], list[OpticVisual]]:
+    """The MRAK25's two silvered legs, its edge at x = ``lead`` pointing +x."""
+    reach = P.MRAK25_LEG / math.sqrt(2)  # each leg runs back this far, and as far to its side
+    elements, visuals = [], []
+    for side, sign in (("left", 1.0), ("right", -1.0)):  # as seen looking along the output
+        centre = (lead - reach / 2, sign * reach / 2)
+        normal = 45.0 * sign  # each leg turns a beam coming from its side toward +x
+        elements.append(
+            OpticalElement(
+                kind=OpticKind.MIRROR,
+                center=centre,
+                normal_angle=normal,
+                half_aperture=P.MRAK25_LEG / 2,
+                name=f"{label} {side} leg".strip(),
+            )
+        )
+        visuals.append(OpticVisual(OpticKind.MIRROR, Pose(*centre, normal), P.MRAK25_LEG, 0.012))
+    return elements, visuals
+
+
+def build_knife_edge_post(unit: UnitType, comp: Component) -> UnitBuild:
+    """MRAK25 in the custom holder on a post in a hole.  Frame: origin on the
+    post axis; the edge points +x, KNIFE_EDGE_LEAD ahead of the post, so beams
+    fed along the post's own column leave 2 x KNIFE_EDGE_LEAD (9.0 mm) apart."""
+    lead = P.KNIFE_EDGE_LEAD
+    parts = [*_post_holder_parts(False, _thumbscrew(comp)), _placed("KEH"), _placed("MRAK25", Pose(lead, 0.0, 0.0))]
+    elements, visuals = _knife_edge_legs(comp.label, lead)
+    glass = translate(Polygon(P.mrak25_outline()).buffer(-0.003, join_style="mitre"), lead, 0.0)
+    holder = [p for p in parts if p.part_id != "MRAK25"]
+    notes = (
+        "Feed both beams along the post's column, one from each side: they leave 9.0 mm apart",
+        f"The edge is {P.KNIFE_EDGE_LEAD / MM:.1f} mm ahead of the post; each beam {P.KNIFE_EDGE_LEAD / MM:.1f} mm from it",
+        "Custom holder: drawing in docs/custom-parts.md (MRAK25 drawn from catalog dimensions)",
+    )
+    return UnitBuild(
+        parts=tuple(parts),
+        elements=tuple(elements),
+        blockers=(*_beam_blockers(holder), Blocker(glass)),
+        optic_visuals=tuple(visuals),
+        notes=notes,
+    )
+
+
+def build_beam_dump(unit: UnitType, comp: Component, *, part_id: str = "LB1") -> UnitBuild:
+    """A beam dump or block on a post in a hole; it faces the unit's angle."""
+    parts = [*_post_holder_parts(False, _thumbscrew(comp)), _placed(part_id)]
+    note = ('Absorbs whatever enters its 1.4" x 0.7" aperture; face it toward the beam' if part_id == "LB1"
+            else "Bead-blasted, black-anodized block: face it toward the stray beam (or turn it to clear a "
+            "neighbour); it scatters what it does not absorb")
+    return UnitBuild(parts=tuple(parts), blockers=tuple(_beam_blockers(parts)), notes=(note,))
+
+
+TARGET_FIELDS = (
+    ParamField(
+        "target.spacing_mm", "Pinhole spacing", "float", 0.0, unit="mm", minimum=0.0, maximum=30.0, step=0.1,
+        decimals=2, tooltip="0: one centred pinhole; otherwise two, this far apart, for two beams side by side",
+    ),
+    ParamField(
+        "target.hole_mm", "Pinhole Ø", "float", 1.0, unit="mm", minimum=0.3, maximum=6.0, step=0.1, decimals=2,
+        tooltip="About the beam's 1/e² radius: a centred beam shows a symmetric ring behind it",
+    ),
+)
+
+
+def build_target(unit: UnitType, comp: Component) -> UnitBuild:
+    """Pinhole target on a post in a hole: the pinholes pass the beams that are
+    on them, the plate stops everything else.  Angle = the beams' direction."""
+    parts = [*_post_holder_parts(False, _thumbscrew(comp)), _placed("TARGET")]
+    spacing = _num(comp.params, "target.spacing_mm", 0.0, 0.0, 30.0) * MM
+    half = _num(comp.params, "target.hole_mm", 1.0, 0.3, 6.0) * MM / 2
+    centres = (0.0,) if spacing <= 0 else (spacing / 2, -spacing / 2)
+    elements = [
+        OpticalElement(kind=OpticKind.WINDOW, center=(0.0, y), normal_angle=0.0, half_aperture=half,
+                       name=f"{comp.label} pinhole{'' if len(centres) == 1 else ' ' + ('left' if y > 0 else 'right')}")
+        for y in centres
+    ]
+    (_, y0, _), (_, y1, _) = P.TARGET_PLATE
+    edges = sorted([y0, y1, *(c - half for c in centres), *(c + half for c in centres)])
+    plate = [Blocker(box(-0.01, lo, 0.01, hi)) for lo, hi in zip(edges[0::2], edges[1::2]) if hi - lo > 1e-6]
+    note = "Each beam should pass its pinhole: a centred beam shows a round, symmetric spot behind it"
+    return UnitBuild(parts=tuple(parts), elements=tuple(elements), blockers=tuple(plate), notes=(note,))
 
 
 # Iris = ID25 on a post, in a post holder (on a pedestal base or in a hole).
@@ -851,7 +969,7 @@ IRIS_FIELDS = (
 
 def build_iris(unit: UnitType, comp: Component) -> UnitBuild:
     pedestal = unit.mounting is Mounting.PEDESTAL
-    parts = [*(_pedestal_parts() if pedestal else _post_holder_parts(False)), _placed("ID25")]
+    parts = [*(_pedestal_parts() if pedestal else _post_holder_parts(False, _thumbscrew(comp))), _placed("ID25")]
     aperture = _num(comp.params, "iris.aperture_mm", 3.0, *P.ID25_APERTURE_MM) * MM
     half, bore = aperture / 2, P.ID25_OPENING
     element = OpticalElement(
@@ -1034,6 +1152,8 @@ def _mount_unit(
         ]
     if mounting is Mounting.PEDESTAL:
         fields.append(FORK_ANGLE)
+    elif mounting is Mounting.HOLE:
+        fields.append(THUMBSCREW_FIELD)
     return UnitType(
         id=uid,
         name=name,
@@ -1049,21 +1169,63 @@ def _mount_unit(
 
 
 BASE_BOM = ("PH2", "BE1", "CF125C", 'TR-series Ø1/2" post')
-# KM100BP + BP108: the optic is always the pellicle; only its split ratio is editable
-# (other Ø1" BP1xx pellicles share the frame).
-BP108_FIELDS = (
-    ParamField(
-        "optic.reflectance",
-        "Reflectance R",
-        "float",
-        P.BP108_REFLECTANCE,
-        minimum=0.0,
-        maximum=1.0,
-        step=0.01,
-        decimals=3,
-        tooltip="BP108: 8:92 (R:T), uncoated, 400–2400 nm",
-    ),
+HOLE_BOM = ("PH2", 'TR-series Ø1/2" post')
+
+
+def _pellicle_fields(part_id: str) -> tuple[ParamField, ...]:
+    """A pellicle mount's optic is always its pellicle; only the split ratio is
+    editable (the other BP1xx / BP2xx coatings share the ring)."""
+    return (
+        ParamField(
+            "optic.reflectance",
+            "Reflectance R",
+            "float",
+            P.BP108_REFLECTANCE,
+            minimum=0.0,
+            maximum=1.0,
+            step=0.01,
+            decimals=3,
+            tooltip=f"{part_id}: 8:92 (R:T), uncoated, 400–2400 nm",
+        ),
+    )
+
+
+# The magnetic pellicle beamsplitters: each mount on a KB1X1, on a pedestal base or in a hole.
+_PELLICLE_UNITS = (
+    # (id stem, mount, size label, kinematic)
+    ("mag-km-pellicle", "KM100BP", 'Ø1"', True),
+    ("mag-pellicle", "BP107", 'Ø1"', False),
+    ("mag-km-pellicle-2in", "KM200BP", 'Ø2"', True),
+    ("mag-pellicle-2in", "BP207", 'Ø2"', False),
 )
+
+
+def _pellicle_units() -> list[UnitType]:
+    units = []
+    for stem, mount_id, size, kinematic in _PELLICLE_UNITS:
+        ring = PELLICLE_MOUNTS[mount_id].part_id
+        holder = f"a {mount_id} kinematic mount" if kinematic else f"a {mount_id} fixed mount"
+        for hole in (False, True):
+            uid = stem.replace("pellicle", "h-pellicle") if hole else stem
+            name = f"{'Kinematic' if kinematic else 'Fixed'} pellicle beamsplitter, {size} ({ring})"
+            where = "on a PH2 screwed into a hole" if hole else "on a pedestal base (PH2 + BE1 + CF125C)"
+            units.append(
+                _mount_unit(
+                    uid,
+                    name + (", hole-mounted" if hole else ""),
+                    category="Beamsplitters",
+                    description=f"{ring} 8:92 pellicle in {holder}, on a KB1X1 magnetic base {where}. "
+                    "Lift it off and put it back with K.",
+                    mounting=Mounting.HOLE if hole else Mounting.PEDESTAL,
+                    prefix="BS",
+                    mount_id=mount_id,
+                    adapter_id="KB1X1",
+                    bom=(mount_id, ring, "KB1X1", *(HOLE_BOM if hole else BASE_BOM)),
+                    default_kind=OpticKind.SPLITTER,
+                    optic_param_fields=_pellicle_fields(ring),
+                )
+            )
+    return units
 
 
 def _length_field(prefix: str, default: float) -> ParamField:
@@ -1188,20 +1350,7 @@ def _build_registry() -> dict[str, UnitType]:
             bom=("FMP1", "KB1X1", "PH2", 'TR-series Ø1/2" post'),
             default_kind=OpticKind.MIRROR,
         ),
-        _mount_unit(
-            "mag-km-pellicle",
-            "Pellicle beamsplitter (BP108)",
-            category="Beamsplitters",
-            description="BP108 8:92 pellicle in a KM100BP kinematic mount, on a KB1X1 magnetic base and pedestal base. "
-            "Lift it off and put it back with K.",
-            mounting=Mounting.PEDESTAL,
-            prefix="BS",
-            mount_id="KM100BP",
-            adapter_id="KB1X1",
-            bom=("KM100BP", "BP108", "KB1X1", *BASE_BOM),
-            default_kind=OpticKind.SPLITTER,
-            optic_param_fields=BP108_FIELDS,
-        ),
+        *_pellicle_units(),
         UnitType(
             id="knife-edge",
             name="Knife-edge prism mirror (MRAK25)",
@@ -1214,6 +1363,56 @@ def _build_registry() -> dict[str, UnitType]:
             bill_of_materials=("MRAK25-P01", "KM100B", *BASE_BOM),
             builder=build_knife_edge,
             fields=(FORK_ANGLE,),
+        ),
+        UnitType(
+            id="knife-edge-post",
+            name="Knife-edge prism mirror (MRAK25), custom holder, hole-mounted",
+            category="Mirrors",
+            description="MRAK25-P01 knife-edge prism mirror in a machined holder on a post, in a PH2 screwed into a "
+            "hole. The edge sits 4.5 mm ahead of the post, so two beams fed along the post's column from opposite "
+            "sides leave side by side, 9.0 mm apart, along the component's angle.",
+            mounting=Mounting.HOLE,
+            label_prefix="KE",
+            bill_of_materials=("MRAK25-P01", "Custom knife-edge holder (docs/custom-parts.md)", "PH2",
+                               'TR-series Ø1/2" post'),
+            builder=build_knife_edge_post,
+            fields=(THUMBSCREW_FIELD,),
+        ),
+        UnitType(
+            id="beam-dump",
+            name="Beam dump (LB1)",
+            category="Beam dumps",
+            description='Thorlabs LB1 beam dump on its Ø1/2" post, in a PH2 screwed into a hole. Its 1.4" x 0.7" '
+            "aperture faces the component's angle.",
+            mounting=Mounting.HOLE,
+            label_prefix="BB",
+            bill_of_materials=("LB1", "PH2"),
+            builder=build_beam_dump,
+            fields=(THUMBSCREW_FIELD,),
+        ),
+        UnitType(
+            id="pinhole-target",
+            name="Pinhole alignment target (custom), hole-mounted",
+            category="Apertures",
+            description="Machined plate with one or two pinholes on a post in a PH2 screwed into a hole: a fixed "
+            "checkpoint the beams must pass. Angle = the beams' direction.",
+            mounting=Mounting.HOLE,
+            label_prefix="T",
+            bill_of_materials=("Custom pinhole target (docs/custom-parts.md)", "PH2", 'TR-series Ø1/2" post'),
+            builder=build_target,
+            fields=(*TARGET_FIELDS, THUMBSCREW_FIELD),
+        ),
+        UnitType(
+            id="beam-block",
+            name="Beam block (custom)",
+            category="Beam dumps",
+            description='Black-anodized aluminium block, 1" x 1" x 3/8", on a post in a PH2 screwed into a hole, '
+            "for milliwatt stray beams where an LB1 does not fit. It faces the component's angle.",
+            mounting=Mounting.HOLE,
+            label_prefix="BB",
+            bill_of_materials=("Custom beam block (docs/custom-parts.md)", "PH2", 'TR-series Ø1/2" post'),
+            builder=partial(build_beam_dump, part_id="BLOCK"),
+            fields=(THUMBSCREW_FIELD,),
         ),
         UnitType(
             id="iris",
@@ -1237,7 +1436,7 @@ def _build_registry() -> dict[str, UnitType]:
             label_prefix="I",
             bill_of_materials=("ID25", "PH2", 'TR-series Ø1/2" post'),
             builder=build_iris,
-            fields=IRIS_FIELDS,
+            fields=(*IRIS_FIELDS, THUMBSCREW_FIELD),
         ),
         _mount_unit(
             "lens",
@@ -1375,6 +1574,19 @@ def _build_registry() -> dict[str, UnitType]:
             for mirrored in (False, True)
         ),
         UnitType(
+            id="beam-expander-riser",
+            name="Beam expander 2X on a custom riser",
+            category="Beam expanders",
+            description="Thorlabs BE02R bolted to a machined riser that puts its axis at beam height; the riser's "
+            "two 1/4\"-20 bolts fix its position on the table. The input beam meets mirror 1 at the component's "
+            "position; angle = input beam direction. Keep mirror 1 on a whole-inch x and the input on a hole row "
+            "so both bolts land on holes.",
+            mounting=Mounting.FREE,
+            label_prefix="BX",
+            bill_of_materials=("BE02R", "Custom riser (docs/custom-parts.md)", '1/4"-20 SHCS x2', "8-32 SHCS x4"),
+            builder=build_beam_expander_riser,
+        ),
+        UnitType(
             id="sample-stage",
             name="Sample stage (MAX311D)",
             category="Stages",
@@ -1452,7 +1664,8 @@ def _build_registry() -> dict[str, UnitType]:
 
 UNIT_TYPES: dict[str, UnitType] = _build_registry()
 CATEGORY_ORDER = (
-    "Sources", "Mirrors", "Beamsplitters", "Lenses", "Objectives", "Apertures", "Stages", "Beam expanders", "Bases",
+    "Sources", "Mirrors", "Beamsplitters", "Lenses", "Objectives", "Apertures", "Beam dumps", "Stages",
+    "Beam expanders", "Bases",
     "Enclosure",
 )
 
