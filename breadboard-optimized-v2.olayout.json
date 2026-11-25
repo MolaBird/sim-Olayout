@@ -1,0 +1,617 @@
+{
+  "format": "olayout",
+  "version": 1,
+  "units": "inch",
+  "breadboard": {
+    "width": 20.0,
+    "height": 18.0,
+    "pitch": 1.0,
+    "margin": 0.5,
+    "hole_diameter": 0.25,
+    "name": "Custom"
+  },
+  "components": [
+    {
+      "id": "c9",
+      "type": "km-h-mirror",
+      "x": 2.5,
+      "y": 2.5,
+      "angle": 22.0,
+      "label": "M2",
+      "orientation": "side",
+      "params": {
+        "optic": {
+          "kind": "mirror",
+          "roc_mm": 0.0,
+          "focal_length_mm": 100.0,
+          "reflectance": 0.5,
+          "transmittance": 1.0,
+          "thickness_mm": null
+        }
+      }
+    },
+    {
+      "id": "c10",
+      "type": "km-h-mirror",
+      "x": 2.5,
+      "y": 15.5,
+      "angle": 338.0,
+      "label": "M3",
+      "params": {
+        "optic": {
+          "kind": "mirror",
+          "roc_mm": 0.0,
+          "focal_length_mm": 100.0,
+          "reflectance": 0.5,
+          "transmittance": 1.0,
+          "thickness_mm": null
+        }
+      }
+    },
+    {
+      "id": "c11",
+      "type": "collimator",
+      "x": 2.5,
+      "y": 13.5,
+      "angle": 0.0,
+      "label": "FC3",
+      "params": {
+        "source": {
+          "enabled": true,
+          "wavelength_nm": 2923.0,
+          "mfd_um": 10.5,
+          "power_mw": 3.0
+        },
+        "lens": {
+          "focal_length_mm": 5.95,
+          "distance_mm": 5.94
+        },
+        "rods": {
+          "length_in": 1.5
+        }
+      }
+    },
+    {
+      "id": "c12",
+      "type": "collimator",
+      "x": 2.5,
+      "y": 11.5,
+      "angle": 0.0,
+      "label": "FC4",
+      "params": {
+        "source": {
+          "enabled": true,
+          "wavelength_nm": 632.0,
+          "mfd_um": 4.5,
+          "power_mw": 1.0
+        },
+        "lens": {
+          "focal_length_mm": 11.0,
+          "distance_mm": 11.0
+        },
+        "rods": {
+          "length_in": 1.5
+        }
+      }
+    },
+    {
+      "id": "c13",
+      "type": "km-h-mirror",
+      "x": 4.5,
+      "y": 13.5,
+      "angle": 158.0,
+      "label": "M4",
+      "orientation": "bottom",
+      "params": {
+        "optic": {
+          "kind": "mirror",
+          "roc_mm": 0.0,
+          "focal_length_mm": 100.0,
+          "reflectance": 0.5,
+          "transmittance": 1.0,
+          "thickness_mm": null
+        }
+      }
+    },
+    {
+      "id": "c14",
+      "type": "km-h-mirror",
+      "x": 4.5,
+      "y": 4.5,
+      "angle": 202.0,
+      "label": "M5",
+      "orientation": "side",
+      "params": {
+        "optic": {
+          "kind": "mirror",
+          "roc_mm": 0.0,
+          "focal_length_mm": 100.0,
+          "reflectance": 0.5,
+          "transmittance": 1.0,
+          "thickness_mm": null
+        }
+      }
+    },
+    {
+      "id": "c15",
+      "type": "collimator",
+      "x": 2.5,
+      "y": 4.5,
+      "angle": 0.0,
+      "label": "FC5",
+      "params": {
+        "source": {
+          "enabled": true,
+          "wavelength_nm": 2923.0,
+          "mfd_um": 10.5,
+          "power_mw": 3.0
+        },
+        "lens": {
+          "focal_length_mm": 5.95,
+          "distance_mm": 5.94
+        },
+        "rods": {
+          "length_in": 1.5
+        }
+      }
+    },
+    {
+      "id": "c16",
+      "type": "collimator",
+      "x": 2.5,
+      "y": 6.5,
+      "angle": 0.0,
+      "label": "FC6",
+      "params": {
+        "source": {
+          "enabled": true,
+          "wavelength_nm": 632.0,
+          "mfd_um": 4.5,
+          "power_mw": 1.0
+        },
+        "lens": {
+          "focal_length_mm": 11.0,
+          "distance_mm": 11.0
+        },
+        "rods": {
+          "length_in": 1.5
+        }
+      }
+    },
+    {
+      "id": "c17",
+      "type": "km-h-mirror",
+      "x": 5.5,
+      "y": 6.5,
+      "angle": 225.0,
+      "label": "M6",
+      "orientation": "bottom",
+      "params": {
+        "optic": {
+          "kind": "mirror",
+          "roc_mm": 0.0,
+          "focal_length_mm": 100.0,
+          "reflectance": 0.5,
+          "transmittance": 1.0,
+          "thickness_mm": null
+        }
+      }
+    },
+    {
+      "id": "c18",
+      "type": "mag-km-pellicle",
+      "x": 4.990855,
+      "y": 1.969507,
+      "angle": 45.0,
+      "label": "BS1",
+      "orientation": "side",
+      "params": {
+        "kb1x1": {
+          "seated": true
+        },
+        "optic": {
+          "reflectance": 0.08
+        },
+        "fork": {
+          "angle": null
+        }
+      }
+    },
+    {
+      "id": "c19",
+      "type": "km-h-mirror",
+      "x": 5.5,
+      "y": 11.5,
+      "angle": 135.0,
+      "label": "M7",
+      "orientation": "side",
+      "params": {
+        "optic": {
+          "kind": "mirror",
+          "roc_mm": 0.0,
+          "focal_length_mm": 100.0,
+          "reflectance": 0.5,
+          "transmittance": 1.0,
+          "thickness_mm": null
+        }
+      }
+    },
+    {
+      "id": "c20",
+      "type": "mag-km-pellicle",
+      "x": 4.990855,
+      "y": 16.030493,
+      "angle": 315.0,
+      "label": "BS2",
+      "orientation": "bottom",
+      "params": {
+        "kb1x1": {
+          "seated": true
+        },
+        "optic": {
+          "reflectance": 0.08
+        },
+        "fork": {
+          "angle": null
+        }
+      }
+    },
+    {
+      "id": "c25",
+      "type": "objective",
+      "x": 15.5,
+      "y": 11.375,
+      "angle": 90.0,
+      "label": "OBJ2",
+      "params": {
+        "objective": {
+          "focal_length_mm": 5.0,
+          "working_distance_mm": 7.8,
+          "pupil_mm": 5.1
+        },
+        "fork": {
+          "angle": null
+        }
+      }
+    },
+    {
+      "id": "c39",
+      "type": "sample-stage",
+      "x": 17.5,
+      "y": 15.5,
+      "angle": 180.0,
+      "label": "ST1",
+      "params": {
+        "stage": {
+          "face": "x",
+          "focus_mm": 0.0,
+          "lateral_mm": 0.0
+        },
+        "optic": {
+          "kind": "block",
+          "roc_mm": 0.0,
+          "focal_length_mm": 100.0,
+          "reflectance": 0.5,
+          "transmittance": 1.0,
+          "thickness_mm": 1.0
+        },
+        "sample": {
+          "width_mm": 25.4,
+          "standoff_mm": 0.0
+        }
+      }
+    },
+    {
+      "id": "c40",
+      "type": "kb-mirror",
+      "x": 7.606929,
+      "y": 15.557929,
+      "angle": 225.0,
+      "label": "M9",
+      "params": {
+        "kb1x1": {
+          "seated": false
+        },
+        "optic": {
+          "kind": "mirror",
+          "roc_mm": 0.0,
+          "focal_length_mm": 100.0,
+          "reflectance": 0.5,
+          "transmittance": 1.0,
+          "thickness_mm": null
+        },
+        "fork": {
+          "angle": null
+        }
+      }
+    },
+    {
+      "id": "c43",
+      "type": "kb-mirror",
+      "x": 7.606929,
+      "y": 2.655929,
+      "angle": 225.0,
+      "label": "M8",
+      "params": {
+        "kb1x1": {
+          "seated": false
+        },
+        "optic": {
+          "kind": "mirror",
+          "roc_mm": 0.0,
+          "focal_length_mm": 100.0,
+          "reflectance": 0.5,
+          "transmittance": 1.0,
+          "thickness_mm": null
+        },
+        "fork": {
+          "angle": null
+        }
+      }
+    },
+    {
+      "id": "c46",
+      "type": "knife-edge",
+      "x": 12.21,
+      "y": 9.0,
+      "angle": 180.0,
+      "label": "KE1",
+      "params": {
+        "fork": {
+          "angle": null
+        }
+      }
+    },
+    {
+      "id": "c47",
+      "type": "km-mirror",
+      "x": 4.125,
+      "y": 9.032792,
+      "angle": 344.5,
+      "label": "M22",
+      "params": {
+        "optic": {
+          "kind": "mirror",
+          "roc_mm": 0.0,
+          "focal_length_mm": 100.0,
+          "reflectance": 0.5,
+          "transmittance": 1.0,
+          "thickness_mm": null
+        },
+        "fork": {
+          "angle": null
+        }
+      }
+    },
+    {
+      "id": "c48",
+      "type": "km-h-mirror",
+      "x": 15.5,
+      "y": 2.5,
+      "angle": 119.55,
+      "label": "M23",
+      "params": {
+        "optic": {
+          "kind": "mirror",
+          "roc_mm": 0.0,
+          "focal_length_mm": 100.0,
+          "reflectance": 0.5,
+          "transmittance": 1.0,
+          "thickness_mm": null
+        }
+      }
+    },
+    {
+      "id": "c50",
+      "type": "kb-h-mirror",
+      "x": 15.5,
+      "y": 8.5,
+      "angle": 45.0,
+      "label": "M25",
+      "params": {
+        "kb1x1": {
+          "seated": false
+        },
+        "optic": {
+          "kind": "mirror",
+          "roc_mm": 0.0,
+          "focal_length_mm": 100.0,
+          "reflectance": 0.5,
+          "transmittance": 1.0,
+          "thickness_mm": null
+        }
+      }
+    },
+    {
+      "id": "c51",
+      "type": "mag-km-pellicle",
+      "x": 15.25,
+      "y": 5.125,
+      "angle": 45.0,
+      "label": "BS3",
+      "params": {
+        "kb1x1": {
+          "seated": false
+        },
+        "optic": {
+          "reflectance": 0.08
+        },
+        "fork": {
+          "angle": null
+        }
+      }
+    },
+    {
+      "id": "c52",
+      "type": "beam-expander-mirrored",
+      "x": 10.012209,
+      "y": 15.450638,
+      "angle": 0.0,
+      "label": "BX7"
+    },
+    {
+      "id": "c53",
+      "type": "h-mirror",
+      "x": 8.5,
+      "y": 12.5,
+      "angle": 11.0,
+      "label": "M26",
+      "params": {
+        "optic": {
+          "kind": "mirror",
+          "roc_mm": 0.0,
+          "focal_length_mm": 100.0,
+          "reflectance": 0.5,
+          "transmittance": 1.0,
+          "thickness_mm": null
+        }
+      }
+    },
+    {
+      "id": "c54",
+      "type": "km-h-mirror",
+      "x": 12.5,
+      "y": 11.5,
+      "angle": 217.0,
+      "label": "M27",
+      "params": {
+        "optic": {
+          "kind": "mirror",
+          "roc_mm": 0.0,
+          "focal_length_mm": 100.0,
+          "reflectance": 0.5,
+          "transmittance": 1.0,
+          "thickness_mm": null
+        }
+      }
+    },
+    {
+      "id": "c55",
+      "type": "beam-expander",
+      "x": 10.074419,
+      "y": 2.549363,
+      "angle": 0.0,
+      "label": "BX8"
+    },
+    {
+      "id": "c56",
+      "type": "km-h-mirror",
+      "x": 12.5,
+      "y": 2.5,
+      "angle": 165.0,
+      "label": "M28",
+      "params": {
+        "optic": {
+          "kind": "mirror",
+          "roc_mm": 0.0,
+          "focal_length_mm": 100.0,
+          "reflectance": 0.5,
+          "transmittance": 1.0,
+          "thickness_mm": null
+        }
+      }
+    },
+    {
+      "id": "c57",
+      "type": "h-mirror",
+      "x": 8.5,
+      "y": 5.5,
+      "angle": 347.0,
+      "label": "M29",
+      "params": {
+        "optic": {
+          "kind": "mirror",
+          "roc_mm": 0.0,
+          "focal_length_mm": 100.0,
+          "reflectance": 0.5,
+          "transmittance": 1.0,
+          "thickness_mm": null
+        }
+      }
+    },
+    {
+      "id": "c58",
+      "type": "km-h-mirror",
+      "x": 12.5,
+      "y": 6.5,
+      "angle": 142.02,
+      "label": "M30",
+      "params": {
+        "optic": {
+          "kind": "mirror",
+          "roc_mm": 0.0,
+          "focal_length_mm": 100.0,
+          "reflectance": 0.5,
+          "transmittance": 1.0,
+          "thickness_mm": null
+        }
+      }
+    },
+    {
+      "id": "c59",
+      "type": "km-h-mirror",
+      "x": 12.5,
+      "y": 15.5,
+      "angle": 194.0,
+      "label": "M31",
+      "params": {
+        "optic": {
+          "kind": "mirror",
+          "roc_mm": 0.0,
+          "focal_length_mm": 100.0,
+          "reflectance": 0.5,
+          "transmittance": 1.0,
+          "thickness_mm": null
+        }
+      }
+    }
+  ],
+  "measurements": [
+    {
+      "id": "m1",
+      "a": [
+        4.743054,
+        9.123929
+      ],
+      "b": [
+        4.675445,
+        8.88014
+      ]
+    }
+  ],
+  "probes": [],
+  "notes": "Two 2923 nm beams (HeNe tracers) combined on knife edge KE1, 57 um apart on the sample.\n1 Co-align one arm at a time on the alignment board below this one: seat its pick-off (M9 top / M8 bottom, K);\n  both send their sample straight down off the bottom edge at x = 7.5\".\n  HeNe: walk M7+BS2 (M6+BS1). 2923: walk M4+M3 (M5+M2). Lift the pick-off.\n2 Per arm, M20 (M21) does the walking: tilt it to place that arm's spot (10 um per mrad);\n  slide it along its incoming beam to move that arm on KE1 and in the pupil (1:1, the spot stays).\n3 M22+M23 walk both beams onto the objective together.\n4 Slide KE1 along the beams to make them cross in the pupil: 1 mm per mm, the spots do not move.\nSee docs/alignment.md.",
+  "ignored": [
+    {
+      "kind": "off-board",
+      "components": [
+        "c39"
+      ],
+      "layer": "base"
+    },
+    {
+      "kind": "overlap",
+      "components": [
+        "c10",
+        "c11"
+      ],
+      "layer": "optic"
+    },
+    {
+      "kind": "overlap",
+      "components": [
+        "c11",
+        "c12"
+      ],
+      "layer": "optic"
+    },
+    {
+      "kind": "overlap",
+      "components": [
+        "c15",
+        "c16"
+      ],
+      "layer": "optic"
+    }
+  ]
+}
