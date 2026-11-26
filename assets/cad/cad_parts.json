@@ -104,6 +104,13 @@
     "origin_mm": [-59.3, 41.22, 0.0],
     "material": "anodized"
   },
+  "MC2000B": {
+    "_note": "z up = CAD +y, x along the beam through the blade = CAD -z; origin: the base plate's centre on the table, which is the centre of its two 1.5in arc slots",
+    "file": "MC2000B-Chopper-Head-Step.step",
+    "axes": ["-z", "-x", "y"],
+    "origin_mm": [-14.89, -15.01, -13.77],
+    "material": "anodized"
+  },
   "CP35": {
     "_note": "origin: optic axis on the front face",
     "file": "CP35-Step.step",

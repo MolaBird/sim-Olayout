@@ -1,6 +1,6 @@
 {
   "format": "olayout",
-  "version": 1,
+  "version": 2,
   "units": "inch",
   "breadboard": {
     "width": 20.0,
@@ -13,7 +13,7 @@
   "components": [
     {
       "id": "c9",
-      "type": "km-h-mirror",
+      "type": "km100cp",
       "x": 2.5,
       "y": 2.5,
       "angle": 22.0,
@@ -27,12 +27,26 @@
           "reflectance": 0.5,
           "transmittance": 1.0,
           "thickness_mm": null
+        },
+        "base": {
+          "kind": "hole",
+          "clamp": "CF125C"
+        },
+        "clamp": {
+          "angle": null
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": false,
+          "seated": true
         }
       }
     },
     {
       "id": "c10",
-      "type": "km-h-mirror",
+      "type": "km100cp",
       "x": 2.5,
       "y": 15.5,
       "angle": 338.0,
@@ -45,6 +59,20 @@
           "reflectance": 0.5,
           "transmittance": 1.0,
           "thickness_mm": null
+        },
+        "base": {
+          "kind": "hole",
+          "clamp": "CF125C"
+        },
+        "clamp": {
+          "angle": null
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": false,
+          "seated": true
         }
       }
     },
@@ -68,6 +96,20 @@
         },
         "rods": {
           "length_in": 1.5
+        },
+        "base": {
+          "kind": "hole",
+          "clamp": "CF125C"
+        },
+        "clamp": {
+          "angle": null
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": false,
+          "seated": true
         }
       }
     },
@@ -91,12 +133,26 @@
         },
         "rods": {
           "length_in": 1.5
+        },
+        "base": {
+          "kind": "hole",
+          "clamp": "CF125C"
+        },
+        "clamp": {
+          "angle": null
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": false,
+          "seated": true
         }
       }
     },
     {
       "id": "c13",
-      "type": "km-h-mirror",
+      "type": "km100cp",
       "x": 4.5,
       "y": 13.5,
       "angle": 158.0,
@@ -110,12 +166,26 @@
           "reflectance": 0.5,
           "transmittance": 1.0,
           "thickness_mm": null
+        },
+        "base": {
+          "kind": "hole",
+          "clamp": "CF125C"
+        },
+        "clamp": {
+          "angle": null
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": false,
+          "seated": true
         }
       }
     },
     {
       "id": "c14",
-      "type": "km-h-mirror",
+      "type": "km100cp",
       "x": 4.5,
       "y": 4.5,
       "angle": 202.0,
@@ -129,6 +199,20 @@
           "reflectance": 0.5,
           "transmittance": 1.0,
           "thickness_mm": null
+        },
+        "base": {
+          "kind": "hole",
+          "clamp": "CF125C"
+        },
+        "clamp": {
+          "angle": null
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": false,
+          "seated": true
         }
       }
     },
@@ -152,6 +236,20 @@
         },
         "rods": {
           "length_in": 1.5
+        },
+        "base": {
+          "kind": "hole",
+          "clamp": "CF125C"
+        },
+        "clamp": {
+          "angle": null
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": false,
+          "seated": true
         }
       }
     },
@@ -175,12 +273,26 @@
         },
         "rods": {
           "length_in": 1.5
+        },
+        "base": {
+          "kind": "hole",
+          "clamp": "CF125C"
+        },
+        "clamp": {
+          "angle": null
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": false,
+          "seated": true
         }
       }
     },
     {
       "id": "c17",
-      "type": "km-h-mirror",
+      "type": "km100cp",
       "x": 5.5,
       "y": 6.5,
       "angle": 225.0,
@@ -194,32 +306,54 @@
           "reflectance": 0.5,
           "transmittance": 1.0,
           "thickness_mm": null
+        },
+        "base": {
+          "kind": "hole",
+          "clamp": "CF125C"
+        },
+        "clamp": {
+          "angle": null
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": false,
+          "seated": true
         }
       }
     },
     {
       "id": "c18",
-      "type": "mag-km-pellicle",
+      "type": "pellicle-km100bp",
       "x": 5.150308,
       "y": 2.12896,
       "angle": 45.0,
       "label": "BS1",
       "orientation": "side",
       "params": {
-        "kb1x1": {
-          "seated": true
-        },
         "optic": {
           "reflectance": 0.08
         },
-        "fork": {
-          "angle": null
+        "base": {
+          "kind": "clamped",
+          "clamp": "CF038"
+        },
+        "clamp": {
+          "angle": 75.69
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": true,
+          "seated": true
         }
       }
     },
     {
       "id": "c19",
-      "type": "km-h-mirror",
+      "type": "km100cp",
       "x": 5.5,
       "y": 11.5,
       "angle": 135.0,
@@ -233,26 +367,48 @@
           "reflectance": 0.5,
           "transmittance": 1.0,
           "thickness_mm": null
+        },
+        "base": {
+          "kind": "hole",
+          "clamp": "CF125C"
+        },
+        "clamp": {
+          "angle": null
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": false,
+          "seated": true
         }
       }
     },
     {
       "id": "c20",
-      "type": "mag-km-pellicle",
+      "type": "pellicle-km100bp",
       "x": 5.150308,
       "y": 15.87104,
       "angle": 315.0,
       "label": "BS2",
       "orientation": "bottom",
       "params": {
-        "kb1x1": {
-          "seated": true
-        },
         "optic": {
           "reflectance": 0.08
         },
-        "fork": {
-          "angle": null
+        "base": {
+          "kind": "clamped",
+          "clamp": "CF038"
+        },
+        "clamp": {
+          "angle": 284.31
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": true,
+          "seated": true
         }
       }
     },
@@ -269,8 +425,19 @@
           "working_distance_mm": 7.8,
           "pupil_mm": 5.1
         },
-        "fork": {
+        "base": {
+          "kind": "clamped",
+          "clamp": "CF125C"
+        },
+        "clamp": {
           "angle": null
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": false,
+          "seated": true
         }
       }
     },
@@ -303,15 +470,12 @@
     },
     {
       "id": "c40",
-      "type": "kb-mirror",
+      "type": "fmp1",
       "x": 7.107,
       "y": 15.557929,
       "angle": 225.0,
       "label": "M9",
       "params": {
-        "kb1x1": {
-          "seated": false
-        },
         "optic": {
           "kind": "mirror",
           "roc_mm": 0.0,
@@ -320,22 +484,30 @@
           "transmittance": 1.0,
           "thickness_mm": null
         },
-        "fork": {
-          "angle": null
+        "base": {
+          "kind": "clamped",
+          "clamp": "CF038"
+        },
+        "clamp": {
+          "angle": 290.38
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": true,
+          "seated": false
         }
       }
     },
     {
       "id": "c43",
-      "type": "kb-mirror",
+      "type": "fmp1",
       "x": 7.107,
       "y": 2.655929,
       "angle": 225.0,
       "label": "M8",
       "params": {
-        "kb1x1": {
-          "seated": false
-        },
         "optic": {
           "kind": "mirror",
           "roc_mm": 0.0,
@@ -344,8 +516,19 @@
           "transmittance": 1.0,
           "thickness_mm": null
         },
-        "fork": {
-          "angle": null
+        "base": {
+          "kind": "clamped",
+          "clamp": "CF038"
+        },
+        "clamp": {
+          "angle": 288.78
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": true,
+          "seated": false
         }
       }
     },
@@ -357,14 +540,25 @@
       "angle": 180.0,
       "label": "KE1",
       "params": {
-        "fork": {
+        "base": {
+          "kind": "clamped",
+          "clamp": "CF125C"
+        },
+        "clamp": {
           "angle": null
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": false,
+          "seated": true
         }
       }
     },
     {
       "id": "c47",
-      "type": "km-mirror",
+      "type": "km100",
       "x": 4.125,
       "y": 9.032792,
       "angle": 344.5,
@@ -378,14 +572,25 @@
           "transmittance": 1.0,
           "thickness_mm": null
         },
-        "fork": {
+        "base": {
+          "kind": "clamped",
+          "clamp": "CF125C"
+        },
+        "clamp": {
           "angle": null
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": false,
+          "seated": true
         }
       }
     },
     {
       "id": "c48",
-      "type": "km-h-mirror",
+      "type": "km100cp",
       "x": 15.5,
       "y": 2.5,
       "angle": 119.496,
@@ -398,6 +603,20 @@
           "reflectance": 0.5,
           "transmittance": 1.0,
           "thickness_mm": null
+        },
+        "base": {
+          "kind": "hole",
+          "clamp": "CF125C"
+        },
+        "clamp": {
+          "angle": null
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": false,
+          "seated": true
         }
       }
     },
@@ -411,7 +630,7 @@
     },
     {
       "id": "c53",
-      "type": "h-mirror",
+      "type": "fmp1",
       "x": 8.5,
       "y": 12.5,
       "angle": 11.0,
@@ -424,12 +643,26 @@
           "reflectance": 0.5,
           "transmittance": 1.0,
           "thickness_mm": null
+        },
+        "base": {
+          "kind": "hole",
+          "clamp": "CF125C"
+        },
+        "clamp": {
+          "angle": null
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": false,
+          "seated": true
         }
       }
     },
     {
       "id": "c54",
-      "type": "km-h-mirror",
+      "type": "km100cp",
       "x": 12.5,
       "y": 11.5,
       "angle": 217.045,
@@ -442,6 +675,20 @@
           "reflectance": 0.5,
           "transmittance": 1.0,
           "thickness_mm": null
+        },
+        "base": {
+          "kind": "hole",
+          "clamp": "CF125C"
+        },
+        "clamp": {
+          "angle": null
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": false,
+          "seated": true
         }
       }
     },
@@ -455,7 +702,7 @@
     },
     {
       "id": "c56",
-      "type": "km-h-mirror",
+      "type": "km100cp",
       "x": 12.5,
       "y": 2.5,
       "angle": 165.0,
@@ -468,12 +715,26 @@
           "reflectance": 0.5,
           "transmittance": 1.0,
           "thickness_mm": null
+        },
+        "base": {
+          "kind": "hole",
+          "clamp": "CF125C"
+        },
+        "clamp": {
+          "angle": null
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": false,
+          "seated": true
         }
       }
     },
     {
       "id": "c57",
-      "type": "h-mirror",
+      "type": "fmp1",
       "x": 8.5,
       "y": 5.5,
       "angle": 347.0,
@@ -486,12 +747,26 @@
           "reflectance": 0.5,
           "transmittance": 1.0,
           "thickness_mm": null
+        },
+        "base": {
+          "kind": "hole",
+          "clamp": "CF125C"
+        },
+        "clamp": {
+          "angle": null
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": false,
+          "seated": true
         }
       }
     },
     {
       "id": "c58",
-      "type": "km-h-mirror",
+      "type": "km100cp",
       "x": 12.5,
       "y": 6.5,
       "angle": 141.946,
@@ -504,12 +779,26 @@
           "reflectance": 0.5,
           "transmittance": 1.0,
           "thickness_mm": null
+        },
+        "base": {
+          "kind": "hole",
+          "clamp": "CF125C"
+        },
+        "clamp": {
+          "angle": null
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": false,
+          "seated": true
         }
       }
     },
     {
       "id": "c59",
-      "type": "km-h-mirror",
+      "type": "km100cp",
       "x": 12.5,
       "y": 15.5,
       "angle": 194.0,
@@ -522,6 +811,20 @@
           "reflectance": 0.5,
           "transmittance": 1.0,
           "thickness_mm": null
+        },
+        "base": {
+          "kind": "hole",
+          "clamp": "CF125C"
+        },
+        "clamp": {
+          "angle": null
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": false,
+          "seated": true
         }
       }
     },
@@ -611,37 +914,56 @@
     },
     {
       "id": "c66",
-      "type": "mag-h-pellicle-2in",
+      "type": "pellicle-bp207",
       "x": 15.5,
       "y": 8.5,
       "angle": 45.0,
       "label": "BS4",
       "params": {
-        "kb1x1": {
-          "seated": true
-        },
         "optic": {
           "reflectance": 0.08
+        },
+        "base": {
+          "kind": "hole",
+          "clamp": "CF125C"
+        },
+        "clamp": {
+          "angle": null
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": true,
+          "seated": true
         }
       }
     },
     {
       "id": "c67",
-      "type": "mag-km-pellicle-2in",
+      "type": "pellicle-km200bp",
       "x": 15.375,
       "y": 5.125,
       "angle": 45.0,
       "label": "BS5",
       "orientation": "side",
       "params": {
-        "kb1x1": {
-          "seated": true
-        },
         "optic": {
           "reflectance": 0.08
         },
-        "fork": {
+        "base": {
+          "kind": "clamped",
+          "clamp": "CF125C"
+        },
+        "clamp": {
           "angle": null
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": true,
+          "seated": true
         }
       }
     }

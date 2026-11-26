@@ -12,6 +12,7 @@ from olayout.catalog.parts import Layer
 from olayout.catalog.units import Mounting
 from olayout.core.breadboard import Breadboard
 from olayout.core.layout import IssueKey
+from olayout.engine.slots import mount_problem
 from olayout.engine.world import PlacedUnit
 
 OVERLAP_AREA = 1e-4  # square inches; touching parts are fine
@@ -83,12 +84,14 @@ def find_issues(units: list[PlacedUnit], board: Breadboard) -> list[Issue]:
     shapely.prepare(board_rect)  # fast repeated containment tests
     for unit in units:
         comp = unit.component
-        mounting = unit.unit.mounting
+        mounting = unit.mounting
         if mounting is Mounting.FREE:
             continue
         if mounting is Mounting.HOLE and board.hole_at(comp.x, comp.y) is None:
             anchor = unit.unit.hole_anchor.lower()
             issues.append(Issue(IssueKind.OFF_HOLE, f"{_name(unit)}: {anchor} is not on a breadboard hole", (comp.id,)))
+        if mounting is Mounting.SLOTS and (problem := mount_problem(unit.unit.slots, unit.screws)):
+            issues.append(Issue(IssueKind.NO_HOLE, f"{_name(unit)}: {problem}", (comp.id,)))
         if mounting is Mounting.PEDESTAL and (unit.fork is None or unit.fork.hole is None):
             issues.append(
                 Issue(IssueKind.NO_HOLE, f"{_name(unit)}: no breadboard hole within the clamping fork's reach", (comp.id,))

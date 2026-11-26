@@ -1,12 +1,19 @@
 """Snapping rules for placing components and picking points.
 
-* Hole-mounted units (a PH2 screwed into the table) always land on a hole.
-* Pedestal units and sources move freely; their optic centre snaps onto a
-  point where two beams cross (where a beamsplitter combines them), else
-  onto a nearby beam (so a mirror drops right into an existing beam),
-  otherwise their post axis snaps to a fine grid.  Holding Alt disables
+* Posts screwed into the table always land on a hole (a grid hole or a
+  drilled one).
+* A unit screwed down through the slots in its own base (the chopper head)
+  lands where its slots catch holes at its current angle ("auto mount"); if
+  there is no such spot at that angle, it moves like a clamped post.
+* Clamped posts and sources move smoothly; their optic centre is pulled
+  onto a point where two beams cross (where a beamsplitter combines them),
+  else onto a nearby beam (so a mirror drops right into an existing beam).
+  Holding Ctrl puts the post axis on a 1/8" grid instead; Alt disables
   snapping.
+* Rotation is smooth too, pulled onto multiples of 15° when close to one.
 * Measurement points snap to holes, post axes, optic centres and beams.
+* A point a beam is aimed at snaps to holes and optic centres, else to the
+  1/8" grid.
 """
 
 from __future__ import annotations
@@ -17,9 +24,10 @@ from itertools import combinations
 
 import numpy as np
 
-from olayout.catalog.units import UNIT_TYPES, Mounting, get_unit_type
+from olayout.catalog.units import UNIT_TYPES, Mounting, get_unit_type, mounting_of
 from olayout.core.geometry import Pose
 from olayout.core.layout import Component
+from olayout.engine.slots import slot_spots
 from olayout.optics.tracer import TraceResult
 from olayout.ui.document import LayoutDocument
 
@@ -72,8 +80,15 @@ def nearest_crossing(trace: TraceResult, point, radius: float) -> tuple[float, f
 @dataclass
 class SnapSettings:
     enabled: bool = True
-    grid: float = 0.125  # fine grid for free-standing units, inches
-    rotation_step: float = 15.0  # degrees
+    grid: float = 0.125  # the grid a free-standing unit snaps to with Ctrl, inches
+    resolution: float = 0.001  # positions are kept to this, inches (a thousandth)
+    rotation_step: float = 15.0  # degrees: rotation is pulled onto these
+    rotation_magnet: float = 2.0  # degrees: how close to a step the pull starts
+    rotation_resolution: float = 0.1  # degrees
+
+
+def _round_to(value: float, step: float) -> float:
+    return round(round(value / step) * step, 6)
 
 
 class Snapper:
@@ -100,14 +115,25 @@ class Snapper:
         scale: float,
         beams: TraceResult | None,
         disabled: bool = False,
+        grid: bool = False,
     ) -> SnapResult:
-        mounting = get_unit_type(comp.type).mounting
+        """Where a component dragged to (raw_x, raw_y) goes.  ``grid``: onto the
+        1/8" grid rather than onto beams (Ctrl); ``disabled``: anywhere (Alt)."""
         board = self.doc.layout.breadboard
+        mounting = mounting_of(comp)
         if mounting is Mounting.HOLE:
             hx, hy = board.nearest_hole(raw_x, raw_y)
             return SnapResult(hx, hy, "hole", (hx, hy))
+        fine = self.settings.resolution
         if disabled or not self.settings.enabled:
-            return SnapResult(raw_x, raw_y, "free")
+            return SnapResult(_round_to(raw_x, fine), _round_to(raw_y, fine), "free")
+        if mounting is Mounting.SLOTS:  # auto mount: where its slots catch holes
+            spots = slot_spots(comp, get_unit_type(comp.type).slots, board, raw_x, raw_y, board.pitch)
+            if spots:
+                return SnapResult(*spots[0], "hole", spots[0])
+        if grid:
+            step = self.settings.grid
+            return SnapResult(_round_to(raw_x, step), _round_to(raw_y, step), "grid")
 
         offset = self.optic_offset(comp)
         if beams is not None and beams.segments and offset is not None:
@@ -122,16 +148,45 @@ class Snapper:
                 px, py = seg.point_at(s)
                 return SnapResult(raw_x + px - center[0], raw_y + py - center[1], "beam", (px, py))
 
-        step = self.settings.grid
-        return SnapResult(round(raw_x / step) * step, round(raw_y / step) * step, "grid")
+        return SnapResult(_round_to(raw_x, fine), _round_to(raw_y, fine), "free")
 
-    def rotation(self, angle: float, free: bool, fine: bool) -> float:
-        if free:
-            return round(angle, 2)
-        step = 1.0 if fine else self.settings.rotation_step
-        return round(angle / step) * step
+    def rotation(self, angle: float, free: bool = False, fine: bool = False, magnet: float | None = None) -> float:
+        """A dragged angle: smooth (to 0.1°), but pulled onto a multiple of 15°
+        within ``magnet`` degrees of one.  ``fine``: whole degrees (Ctrl);
+        ``free``: no pull (Shift)."""
+        settings = self.settings
+        if fine:
+            return _round_to(angle, 1.0)
+        if not free and settings.enabled:
+            step = settings.rotation_step
+            nearest = round(angle / step) * step
+            if abs(angle - nearest) <= (settings.rotation_magnet if magnet is None else magnet):
+                return _round_to(nearest, 1e-6)
+        return _round_to(angle, settings.rotation_resolution)
 
     # --------------------------------------------------------------- points
+    def target(self, raw_x: float, raw_y: float, scale: float, disabled: bool = False,
+               exclude: str | None = None) -> SnapResult:
+        """A point to aim a beam at: a hole or another component's optic centre
+        nearby, else the 1/8" grid; ``disabled`` (Alt): anywhere."""
+        if disabled or not self.settings.enabled:
+            return SnapResult(raw_x, raw_y, "free", (raw_x, raw_y))
+        hx, hy = self.doc.layout.breadboard.nearest_hole(raw_x, raw_y)
+        candidates = [(math.hypot(hx - raw_x, hy - raw_y), "hole", hx, hy)]
+        for comp in self.doc.layout.components:
+            placed = self.doc.analysis.units.get(comp.id)
+            if comp.id == exclude or placed is None:
+                continue
+            for element in placed.build.elements:
+                cx, cy = comp.pose.apply(element.center)
+                candidates.append((math.hypot(cx - raw_x, cy - raw_y), "point", float(cx), float(cy)))
+        distance, kind, x, y = min(candidates, key=lambda c: c[0])
+        if distance <= SNAP_PX / scale:
+            return SnapResult(x, y, kind, (x, y))
+        step = self.settings.grid
+        x, y = _round_to(raw_x, step), _round_to(raw_y, step)
+        return SnapResult(x, y, "grid", (x, y))
+
     def point(self, raw_x: float, raw_y: float, scale: float, disabled: bool = False) -> SnapResult:
         """Snap a free point (measurements, probes) to something meaningful."""
         if disabled:
@@ -212,16 +267,3 @@ def constrain_angle(ax: float, ay: float, bx: float, by: float, step_deg: float 
     rad = math.radians(angle)
     return ax + length * math.cos(rad), ay + length * math.sin(rad)
 
-
-def aim_angle(incoming: tuple[float, float], hit: tuple[float, float], target: tuple[float, float]) -> float | None:
-    """Mirror-normal angle that reflects a beam arriving along ``incoming`` at
-    ``hit`` toward ``target`` (degrees), or None if undefined."""
-    d = np.asarray(incoming, dtype=float)
-    u = np.asarray(target, dtype=float) - np.asarray(hit, dtype=float)
-    norm = np.hypot(*u)
-    if norm < 1e-6:
-        return None
-    n = u / norm - d
-    if np.hypot(*n) < 1e-9:
-        return None
-    return math.degrees(math.atan2(n[1], n[0]))

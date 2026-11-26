@@ -146,7 +146,7 @@ def test_measure_and_probe_tools(window, qtbot):
 
 def test_place_tool_and_export(window, qtbot, tmp_path, monkeypatch):
     doc = window.doc
-    window.view.start_placing("mirror")
+    window.view.start_placing("fmp1")
     vp = window.view.viewport()
     p = view_point(window, 10.3, 9.1)
     qtbot.mouseMove(vp, p)
@@ -166,9 +166,10 @@ def test_inspector_shows_auto_values(window, qtbot):
     inspector = window.inspector
     _, thickness, _ = inspector._param_widgets["optic.thickness_mm"]
     assert not thickness.isEnabled() and thickness.value() == pytest.approx(6.0)  # typical mirror
-    _, fork, _ = inspector._param_widgets["fork.angle"]
-    solved = doc.analysis.units[doc.selection[0]].fork.angle
-    assert fork.value() == pytest.approx((solved + 180) % 360 - 180, abs=0.05)
+    _, clamp, _ = inspector._param_widgets["clamp.angle"]
+    comp = doc.selected_components()[0]
+    solved = doc.analysis.units[comp.id].fork.angle + comp.angle  # where it points on the table
+    assert not clamp.isEnabled() and clamp.value() == pytest.approx((solved + 180) % 360 - 180, abs=0.05)
 
 
 def test_inspector_edits_parameters(window, qtbot):
@@ -224,9 +225,11 @@ def test_alt_wheel_rotates_the_selection_and_ctrl_wheel_zooms(window, qtbot):
     wheel(window, pos, 120, Qt.KeyboardModifier.ControlModifier)
     assert view.pixels_per_inch() > ppi and doc.layout.component(cid).angle == start
     wheel(window, pos, 120, Qt.KeyboardModifier.AltModifier)
-    assert doc.layout.component(cid).angle == pytest.approx(start + 5.0)
+    assert doc.layout.component(cid).angle == pytest.approx(start + 1.0)
     wheel(window, pos, -120, Qt.KeyboardModifier.AltModifier | Qt.KeyboardModifier.ShiftModifier)
-    assert doc.layout.component(cid).angle == pytest.approx(start + 4.0)
+    assert doc.layout.component(cid).angle == pytest.approx(start + 0.9)
+    doc.undo_stack.undo()  # turns in a row undo together
+    assert doc.layout.component(cid).angle == pytest.approx(start)
 
 
 def test_ignoring_problems_clears_highlights_and_can_be_undone(window, qtbot):
@@ -303,7 +306,7 @@ def test_k_lifts_a_mount_off_its_kb1x1_and_puts_it_back(window, qtbot):
     window.act_lift.trigger()
     settle(qtbot, window)
     assert doc.layout.component(m).params["kb1x1"]["seated"] is False
-    assert "kb1x1" not in doc.layout.component(plain).params  # no KB1X1: untouched
+    assert doc.layout.component(plain).params["kb1x1"] == {"present": False, "seated": True}  # untouched
     optic_item = window.view.layout_scene.comp_items[m][Layer.OPTIC]
     assert optic_item._detached and optic_item.has_content()  # drawn faintly
     window.act_lift.trigger()
@@ -335,14 +338,15 @@ def test_combine_tool_places_a_pellicle_where_two_beams_cross(window, qtbot):
     assert tool.output_line.isVisible() and any(item.isVisible() for item in tool.ghost.values())
     qtbot.mouseClick(vp, Qt.MouseButton.LeftButton, pos=r)
     assert window.view.tool.name == "select"
-    (bs,) = [c for c in doc.layout.components if c.type == "mag-km-pellicle"]
+    (bs,) = [c for c in doc.layout.components if c.type == "pellicle-km100bp"]
     assert doc.selection == [bs.id]
+    assert bs.params["base"]["kind"] == "clamped" and bs.params["kb1x1"]["present"]  # stands anywhere, lifts off
     settle(qtbot, window)
     combined = [s for s in doc.analysis.trace.segments if s.parent is not None and s.direction[0] > 0.999999
                 and abs(s.start[1] - 8.0) < 1e-6 and abs(s.start[0] - 10.0) < 1e-6]
     assert len({s.source for s in combined}) == 2  # both beams leave the splitter along T
     doc.undo_stack.undo()
-    assert not [c for c in doc.layout.components if c.type == "mag-km-pellicle"]
+    assert not [c for c in doc.layout.components if c.type == "pellicle-km100bp"]
 
 
 def test_combine_tool_moves_the_selected_splitter_and_esc_backs_out(window, qtbot):
@@ -378,24 +382,26 @@ def test_combine_tool_moves_the_selected_splitter_and_esc_backs_out(window, qtbo
 
 
 def test_thumbnails_frame_the_component_not_its_clamping_fork():
-    from olayout.catalog.units import Mounting, default_fork, get_unit_type, new_component_params
-    from olayout.core.layout import Component
+    from conftest import on_post
+
+    from olayout.catalog.units import LIBRARY, Mounting, default_fork, mounting_of
     from olayout.engine.world import BuildCache
     from olayout.ui.canvas.painting import parts_bounds, thumbnail_framing, unit_thumbnail
 
-    def framed_size(type_id):
-        unit = get_unit_type(type_id)
-        fork = default_fork() if unit.mounting is Mounting.PEDESTAL else None
-        placed = BuildCache().place(Component("t", type_id, params=new_component_params(type_id)), fork)
+    def framed_size(type_id, holder):
+        comp = on_post(type_id, "t", holder=holder)
+        fork = default_fork() if mounting_of(comp) is Mounting.PEDESTAL else None
+        placed = BuildCache().place(comp, fork)
         framed = thumbnail_framing(list(placed.parts))
         assert {p.layer for p in framed} == {Layer.OPTIC}  # the mount itself, not what holds it
         rect = parts_bounds(framed)
         return rect.width(), rect.height()
 
     # The same mount on a pedestal or in a hole: framed identically.
-    for pedestal, hole in (("mirror", "h-mirror"), ("objective", "h-objective"), ("lens", "h-lens")):
-        assert framed_size(pedestal) == pytest.approx(framed_size(hole))
-    assert unit_thumbnail("base", 40).width() == 40  # a bare base has nothing else: framed whole
+    for type_id in ("fmp1", "objective", "lens"):
+        assert framed_size(type_id, "clamped") == pytest.approx(framed_size(type_id, "hole"))
+    entry = LIBRARY["post-clamped"]  # a bare post has nothing else: framed whole
+    assert unit_thumbnail(entry.type_id, 40, params=entry.initial_params()).width() == 40
 
 
 def test_rails_and_boards_are_drawn_end_to_end(window, qtbot):
@@ -448,3 +454,251 @@ def test_stage_thumbnail_frames_the_stage():
 
     placed = BuildCache().place(Component("t", "sample-stage", params=new_component_params("sample-stage")))
     assert {p.part_id for p in thumbnail_framing(list(placed.parts))} == {"MAX311D", "SAMPLE"}
+
+
+# ---------------------------------------------------------------- posts
+def click_at(win, qtbot, x, y, button=Qt.MouseButton.LeftButton):
+    vp, p = win.view.viewport(), view_point(win, x, y)
+    qtbot.mouseMove(vp, p)
+    qtbot.mouseClick(vp, button, pos=p)
+
+
+def menu_action(menu: QMenu, *path: str):
+    """The action reached through submenus titled ``path[:-1]`` whose text starts with ``path[-1]``."""
+    for title in path[:-1]:
+        menu = next(a.menu() for a in menu.actions() if a.menu() is not None and a.text() == title)
+    return next(a for a in menu.actions() if a.text().startswith(path[-1]))
+
+
+def test_mounts_go_onto_posts_and_come_off_again(window, qtbot):
+    doc, view = window.doc, window.view
+    view.start_placing("post")
+    click_at(window, qtbot, 6.4, 6.6)
+    (post,) = doc.layout.components
+    assert (post.type, post.x, post.y, post.label) == ("post", 6.5, 6.5, "PH1")
+
+    view.start_placing("km100")
+    qtbot.mouseMove(view.viewport(), view_point(window, 6.7, 6.3))
+    assert view.tool.post_id == post.id  # the ghost sits on the post
+    click_at(window, qtbot, 6.7, 6.3)
+    (mirror,) = doc.layout.components  # onto the post: still one component
+    assert (mirror.id, mirror.type, mirror.label, mirror.x, mirror.y) == (post.id, "km100", "M1", 6.5, 6.5)
+    assert doc.selection == [mirror.id] and not window.inspector._post_buttons.isHidden()
+
+    view.start_placing("fmp1")
+    click_at(window, qtbot, 12.0, 12.0)  # away from any post: it comes on its own
+    assert len(doc.layout.components) == 2
+
+    doc.set_selection([mirror.id])
+    window.act_take_off.trigger()
+    bare = doc.layout.component(mirror.id)
+    assert bare.type == "post" and bare.label.startswith("PH") and "optic" not in bare.params
+    doc.undo_stack.undo()
+    assert doc.layout.component(mirror.id).type == "km100"
+
+
+def test_a_kb1x1_goes_under_a_posts_mount_and_k_lifts_the_mount(window, qtbot):
+    doc, view = window.doc, window.view
+    m = doc.add_component("fmp1", 6.5, 6.5)
+    view.start_placing("kb1x1")
+    click_at(window, qtbot, 6.55, 6.45)
+    assert len(doc.layout.components) == 1 and doc.layout.component(m).params["kb1x1"]["present"]
+    window.act_lift.trigger()
+    assert doc.layout.component(m).params["kb1x1"]["seated"] is False
+    assert "Remove KB1X1 Base" in [a.text() for a in window._build_context_menu(m).actions()]
+
+
+def test_right_click_switches_the_holder_and_the_clamp(window, qtbot):
+    doc = window.doc
+    m = doc.add_component("km100", 10.5, 9.5)
+    menu_action(window._build_context_menu(m), "Post Holder", "Clamped").trigger()
+    assert doc.layout.component(m).params["base"]["kind"] == "clamped"
+    menu_action(window._build_context_menu(m), "Clamp", "CF038").trigger()
+    assert doc.layout.component(m).params["base"]["clamp"] == "CF038"
+    settle(qtbot, window)
+    assert doc.analysis.units[m].fork.clamp == "CF038"
+    doc.set_component_fields(m, x=10.3, y=9.2)
+    menu_action(window._build_context_menu(m), "Post Holder", "In a Hole").trigger()
+    comp = doc.layout.component(m)
+    assert comp.params["base"]["kind"] == "hole" and (comp.x, comp.y) == (10.5, 9.5)  # into the nearest hole
+
+
+def test_the_clamp_tool_points_the_clamp_at_a_chosen_hole(window, qtbot):
+    from olayout.engine.fork import hole_toward
+
+    doc, view = window.doc, window.view
+    m = doc.add_component("post-clamped", 10.0, 9.0)
+    settle(qtbot, window)
+    menu_action(window._build_context_menu(m), "Clamp", "Turn Clamp").trigger()
+    assert view.tool.name == "clamp"
+    qtbot.keyClick(view.viewport(), Qt.Key.Key_Escape)  # cancel: nothing changes
+    assert view.tool.name == "select" and doc.layout.component(m).params["clamp"]["angle"] is None
+
+    window._turn_clamp(m)
+    target = hole_toward(doc.layout.component(m), doc.layout.breadboard, 60.0)
+    click_at(window, qtbot, *target)  # point right at it
+    assert view.tool.name == "select"
+    settle(qtbot, window)
+    assert doc.analysis.units[m].fork.hole == target
+    assert doc.layout.component(m).params["clamp"]["angle"] is not None
+    doc.undo_stack.undo()
+    assert doc.layout.component(m).params["clamp"]["angle"] is None
+
+
+def test_holes_are_drilled_at_cell_centres_and_filled_again(window, qtbot):
+    doc, view = window.doc, window.view
+    window.act_drill.trigger()
+    assert view.tool.name == "drill"
+    click_at(window, qtbot, 5.05, 4.95)
+    assert doc.layout.breadboard.drilled == ((5.0, 5.0),)
+    click_at(window, qtbot, 7.5, 7.5)  # a grid hole: not a cell centre
+    assert doc.layout.breadboard.drilled == ((5.0, 5.0),)
+    m = doc.add_component("fmp1", 5.0, 5.0)
+    settle(qtbot, window)
+    assert not doc.analysis.issues_for(m)  # screwed into the new hole
+    assert "Fill Drilled Hole" in [a.text() for a in window._build_context_menu(None, (5.1, 5.0)).actions()]
+    assert "Drill Hole Here" in [a.text() for a in window._build_context_menu(None, (8.0, 8.0)).actions()]
+    window.act_drill.trigger()
+    click_at(window, qtbot, 5.0, 5.0)
+    assert doc.layout.breadboard.drilled == ()
+    doc.undo_stack.undo()
+    assert doc.layout.breadboard.drilled == ((5.0, 5.0),)
+    doc.set_breadboard(Layout().breadboard.__class__(width=24.0, height=20.0))  # a resize keeps it
+    assert doc.layout.breadboard.drilled == ((5.0, 5.0),)
+
+
+def test_a_mount_moves_to_another_post_with_its_settings(window, qtbot):
+    doc = window.doc
+    a = doc.add_component("fmp1", 6.5, 6.5)
+    doc.set_component_param(a, "optic.kind", "splitter")
+    b = doc.add_component("post", 10.5, 6.5)
+    doc.set_selection([a])
+    window.act_move_mount.trigger()
+    assert window.view.tool.name == "place"
+    click_at(window, qtbot, 10.5, 6.5)
+    old, new = doc.layout.component(a), doc.layout.component(b)
+    assert old.type == "post" and new.type == "fmp1" and new.params["optic"]["kind"] == "splitter"
+    assert new.label == "M1" and doc.selection == [b]
+
+
+def test_moving_and_turning_are_smooth(window, qtbot):
+    from conftest import on_post
+
+    doc, snapper = window.doc, window.view.snapper
+    assert snapper.rotation(37.43) == pytest.approx(37.4)
+    assert snapper.rotation(44.0) == 45.0  # pulled onto a 15° step
+    assert snapper.rotation(44.0, free=True) == pytest.approx(44.0)
+    assert snapper.rotation(37.43, fine=True) == 37.0
+    clamped, in_hole = on_post("km100", "a", holder="clamped"), on_post("km100", "b")
+    snap = snapper.component(clamped, 3.2468, 4.1234, 100.0, None)
+    assert (snap.x, snap.y) == pytest.approx((3.247, 4.123), abs=1e-9)
+    snap = snapper.component(clamped, 3.2468, 4.1234, 100.0, None, grid=True)  # Ctrl
+    assert (snap.x, snap.y) == (3.25, 4.125)
+    snap = snapper.component(in_hole, 3.2468, 4.1234, 100.0, None)
+    assert (snap.x, snap.y) == (3.5, 4.5)
+
+    m = doc.add_component("post-clamped", 6.0, 6.0)
+    doc.set_selection([m])
+    window.act_rot1.trigger()
+    window.act_rot01.trigger()
+    assert doc.layout.component(m).angle == pytest.approx(1.1)
+    window.nudge(1, 0, "normal")
+    window.nudge(0, 1, "fine")
+    comp = doc.layout.component(m)
+    assert (comp.x, comp.y) == pytest.approx((6.0 + 1 / 32, 6.005))
+
+
+# ------------------------------------------------------------------ aiming
+def beam_miss(doc, comp_id, target) -> float:
+    """How far the beam leaving ``comp_id`` passes from ``target`` (inches)."""
+    from olayout.engine.aim import leaving_component
+
+    trace = doc.analysis.trace
+    seg = next(s for s in trace.segments if s.parent is not None and leaving_component(trace, s) == comp_id)
+    vx, vy = target[0] - seg.start[0], target[1] - seg.start[1]
+    return abs(seg.direction[0] * vy - seg.direction[1] * vx)
+
+
+def test_the_aim_tool_turns_a_mirror_so_its_beam_hits_a_hole(window, qtbot):
+    doc, view = window.doc, window.view
+    doc.add_component("laser", 2.0, 4.9, 0.0)
+    m = doc.add_component("km100", 8.5, 4.5, 135.0)
+    doc.set_selection([])
+    settle(qtbot, window)
+    window.act_aim.trigger()
+    assert view.tool.name == "aim" and "click the beam" in window.tool_label.text()
+    click_at(window, qtbot, 8.0, 7.0)  # the reflected beam, heading up
+    assert view.tool.picked is not None and "M1's reflected beam" in window.tool_label.text()
+    qtbot.keyClick(view.viewport(), Qt.Key.Key_Escape)  # back to picking a beam
+    assert view.tool.name == "aim" and view.tool.picked is None
+    click_at(window, qtbot, 8.0, 7.0)
+    qtbot.mouseMove(view.viewport(), view_point(window, 6.6, 12.4))  # previews the turn
+    assert view.tool.preview_line.isVisible() and any(item.isVisible() for item in view.tool.ghost.values())
+    click_at(window, qtbot, 6.6, 12.4)  # snaps onto the hole at (6.5, 12.5)
+    assert view.tool.name == "select" and doc.selection == [m]
+    settle(qtbot, window)
+    assert beam_miss(doc, m, (6.5, 12.5)) < 1e-6
+    doc.undo_stack.undo()
+    assert doc.layout.component(m).angle == pytest.approx(135.0)
+
+
+def test_aiming_a_selected_part_picks_its_beam_and_alt_aims_exactly(window, qtbot):
+    doc, view = window.doc, window.view
+    doc.add_component("laser", 2.0, 4.9, 0.0)
+    m = doc.add_component("km100", 8.5, 4.5, 135.0)
+    settle(qtbot, window)
+    assert "Aim Its Beam at a Point…" in [a.text() for a in window._build_context_menu(m).actions()]
+    window.act_aim.trigger()  # M1 is selected: its one beam is picked straight away
+    assert view.tool.only == m and view.tool.picked is not None
+    qtbot.keyClick(view.viewport(), Qt.Key.Key_Escape)
+    assert view.tool.name == "select"
+
+    # Alt + the rotate handle: the beam follows the cursor exactly.
+    tool, comp = view.tool, doc.layout.component(m)
+    tool.mode, tool.start_poses = "rotate", {m: (comp.x, comp.y, comp.angle)}
+    tool.aim = tool._outgoing_beam(m)
+    doc.begin_interaction()
+    tool._rotate_to(7.0, 12.0, Qt.KeyboardModifier.AltModifier)
+    doc.end_interaction("Rotate")
+    settle(qtbot, window)
+    assert beam_miss(doc, m, (7.0, 12.0)) < 1e-6
+
+
+def test_a_selected_part_aims_a_beam_after_other_mirrors(window, qtbot):
+    doc, view = window.doc, window.view
+    doc.add_component("laser", 1.5, 2.5, 0.0)
+    m1 = doc.add_component("km100cp", 6.5, 2.5, 135.0)
+    m2 = doc.add_component("km100cp", 6.5, 8.5, 315.0)
+    m3 = doc.add_component("km100cp", 14.5, 8.5, 225.0)
+    doc.set_selection([m1])
+    settle(qtbot, window)
+    window.act_aim.trigger()
+    assert view.tool.only == m1 and view.tool.picked is None  # several beams come from M1: pick one
+    qtbot.mouseMove(view.viewport(), view_point(window, 14.5, 6.0))
+    assert view.tool.beam_line.isVisible()  # the whole beam from M1 is highlighted
+    click_at(window, qtbot, 14.5, 6.0)  # the beam after M3
+    assert "the beam after M3, turning M1" in window.tool_label.text()
+    click_at(window, qtbot, 14.375, 4.0)
+    assert view.tool.name == "select"
+    settle(qtbot, window)
+    comps = {c.id: c for c in doc.layout.components}
+    assert comps[m1].angle != 135.0 and (comps[m2].angle, comps[m3].angle) == (315.0, 225.0)
+    trace = doc.analysis.trace
+    final = next(s for s in trace.segments if [p.end_owner for p in trace.path_to(s)[:-1]] == [m1, m2, m3])
+    vx, vy = 14.375 - final.start[0], 4.0 - final.start[1]
+    assert abs(final.direction[0] * vy - final.direction[1] * vx) < 1e-6
+
+
+def test_the_chopper_snaps_to_where_its_slots_catch_holes(window, qtbot):
+    doc, view = window.doc, window.view
+    view.start_placing("chopper")
+    click_at(window, qtbot, 8.3, 7.2)
+    (chopper,) = doc.layout.components
+    assert (chopper.type, chopper.x, chopper.y) == ("chopper", 8.5, 7.0)
+    settle(qtbot, window)
+    placed = doc.analysis.units[chopper.id]
+    assert placed.screws == ((8.5, 8.5), (8.5, 5.5)) and sum(p.part_id == "SCREW" for p in placed.parts) == 2
+    assert "Screwed down through its left slot" in window.inspector._info.text()
+    window.nudge(1, 0, "normal")  # a whole hole: still screwed down
+    settle(qtbot, window)
+    assert doc.layout.component(chopper.id).x == 9.5 and not doc.analysis.issues_for(chopper.id)

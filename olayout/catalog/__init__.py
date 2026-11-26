@@ -2,6 +2,7 @@
 
 * :mod:`olayout.catalog.parts`   -- individual parts (KM100, PH2, CF125C, ...)
   modelled with simple 3D primitives.
-* :mod:`olayout.catalog.units`   -- combined units ("km-mirror", "collimator",
-  ...) that the user drags onto the breadboard.
+* :mod:`olayout.catalog.units`   -- the units the user places: posts (in a
+  hole or clamped, with or without a KB1X1) with a mount on top ("km100",
+  "collimator", ...), and free-standing units (beam expanders, stages, framing).
 """

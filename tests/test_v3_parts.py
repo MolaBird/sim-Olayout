@@ -8,7 +8,7 @@ import pytest
 
 from olayout import paths
 from olayout.catalog import parts as P
-from olayout.catalog.units import THUMBSCREW_ANGLE
+from olayout.catalog.units import THUMBSCREW_ANGLE, Mounting, mounting_of
 from olayout.core.layout import Layout
 from olayout.core.units import MM, UM
 from olayout.engine.analysis import Analyzer
@@ -172,4 +172,4 @@ def test_layout_v3_mounts_every_mirror_in_a_hole():
     mirrors = [c for c in layout.components if c.label.startswith("M")]
     assert len(mirrors) == 16
     assert all(board.hole_at(c.x, c.y) is not None for c in mirrors)
-    assert all(c.type in ("km-h-mirror", "kb-h-mirror") for c in mirrors)
+    assert all(c.type in ("km100cp", "fmp1") and mounting_of(c) is Mounting.HOLE for c in mirrors)

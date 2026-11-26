@@ -204,6 +204,25 @@ class BeamTracer:
             self._trace_emitter(emitter, result)
         return result
 
+    def follow(self, origin, direction, state: BeamState, source: str = "") -> TraceResult:
+        """Trace one ray that does not start at an emitter (e.g. a beam arriving
+        from elsewhere, against a few optics only)."""
+        result = TraceResult()
+        stack = [
+            _Ray(
+                origin=np.asarray(origin, dtype=float),
+                direction=normalize(np.asarray(direction, dtype=float)),
+                state=state,
+                parent=None,
+                depth=0,
+                path=0.0,
+                source=source,
+            )
+        ]
+        while stack and len(result.segments) < self.max_segments:
+            self._step(stack.pop(), result, stack, 0.0)
+        return result
+
     # -------------------------------------------------------------- helpers
     def _exit_distance(self, origin: np.ndarray, direction: np.ndarray) -> float:
         x0, y0, x1, y1 = self.bounds

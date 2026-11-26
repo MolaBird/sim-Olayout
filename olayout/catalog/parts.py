@@ -915,10 +915,6 @@ CF125C_THICKNESS = 0.44
 CF125C_FLOOR = 0.20  # estimate: counterbore floor height
 
 
-def cf125c_screw_range() -> tuple[float, float]:
-    """Min/max distance from the pedestal centre to the clamp screw axis."""
-    return CF125C_SCREW_TRAVEL
-
 
 def _stadium(x0: float, x1: float, half_w: float, segments: int = 8) -> tuple[tuple[float, float], ...]:
     """Slot outline: straight sides joining semicircular ends centred at x0 and x1."""
@@ -932,37 +928,82 @@ def _stadium(x0: float, x1: float, half_w: float, segments: int = 8) -> tuple[tu
     return tuple(pts)
 
 
-def _fork_outline() -> tuple[tuple[float, float], ...]:
+def _fork_outline(profile: tuple[tuple[float, float], ...] = CF125C_PROFILE) -> tuple[tuple[float, float], ...]:
     """Fork outline: the drawing's width profile, open around the pedestal.
 
     Walk the upper edge tip -> heel, the lower edge back to the tip, then the
     Ø1.01" opening from the lower tine round to the upper tine.
     """
     radius = CF125C_OPENING_R
-    tip_d = CF125C_PROFILE[0][0]
+    tip_d = profile[0][0]
     a_tip = math.atan2(math.sqrt(radius**2 - tip_d**2), tip_d)
-    upper = [(d, w) for d, w in CF125C_PROFILE]
-    lower = [(d, -w) for d, w in reversed(CF125C_PROFILE[:-1])]
+    upper = [(d, w) for d, w in profile]
+    lower = [(d, -w) for d, w in reversed(profile[:-1])]
     opening = [(radius * math.cos(a), radius * math.sin(a)) for a in np.linspace(-a_tip, a_tip, 25)]
     return tuple((float(x), float(y)) for x, y in upper + lower + opening)
 
 
-def make_cf125c() -> PartSpec:
-    lo, hi = CF125C_SCREW_TRAVEL
-    outline = _fork_outline()
+def _fork_prims(profile: tuple[tuple[float, float], ...], travel: tuple[float, float]) -> tuple[Primitive, ...]:
+    """A clamping fork lying on the table: through slot below, counterbore above."""
+    lo, hi = travel
+    outline = _fork_outline(profile)
     counterbore = _stadium(lo, hi, CF125C_COUNTERBORE_W / 2)
     through = _stadium(lo, hi, CF125C_THROUGH_SLOT_W / 2)
-    prims = (
+    return (
         Prism(outline, 0.0, CF125C_FLOOR, "steel", holes=(through,)),
         Prism(outline, CF125C_FLOOR, CF125C_THICKNESS, "steel", holes=(counterbore,)),
     )
+
+
+def make_cf125c() -> PartSpec:
     return PartSpec(
         id="CF125C",
         name="CF125C clamping fork",
         layer=Layer.BASE,
-        prims=prims,
+        prims=_fork_prims(CF125C_PROFILE, CF125C_SCREW_TRAVEL),
         description="Clamping fork, 1.24\" counterbored slot, captive 1/4\"-20 screw (2.91\" long).",
     )
+
+
+# CF038 short clamping fork (CF038-P5 is a pack of five).  No drawing or CAD
+# file was available: it is modelled as the CF125C cut short, keeping the same
+# Ø1.01" opening and slot start, with the 0.38" slot Thorlabs lists.  The
+# outline past the slot is an estimate.
+CF038_SCREW_TRAVEL = (CF125C_SCREW_TRAVEL[0], CF125C_SCREW_TRAVEL[0] + 0.38)
+CF038_PROFILE = (  # estimate
+    (-0.15, 0.67), (0.0, 0.715), (0.4, 0.65), (0.8, 0.56), (1.2, 0.48),
+    (1.55, 0.45), (1.75, 0.36), (1.90, 0.0),
+)
+
+
+def make_cf038() -> PartSpec:
+    return PartSpec(
+        id="CF038",
+        name="CF038 short clamping fork",
+        layer=Layer.BASE,
+        prims=_fork_prims(CF038_PROFILE, CF038_SCREW_TRAVEL),
+        description="Short clamping fork, 0.38\" counterbored slot, 1/4\"-20 cap screw (outline estimated).",
+    )
+
+
+@dataclass(frozen=True)
+class ClampSpec:
+    """A clamping fork a pedestal base can be held down with."""
+
+    part_id: str
+    label: str
+    screw_travel: tuple[float, float]  # screw axis distance from the pedestal centre, min and max
+
+
+CLAMPS: dict[str, ClampSpec] = {
+    "CF125C": ClampSpec("CF125C", 'CF125C (1.24" slot)', CF125C_SCREW_TRAVEL),
+    "CF038": ClampSpec("CF038", 'CF038-P5, short (0.38" slot)', CF038_SCREW_TRAVEL),
+}
+DEFAULT_CLAMP = "CF125C"
+
+
+def clamp_spec(clamp_id: str | None) -> ClampSpec:
+    return CLAMPS.get(clamp_id or DEFAULT_CLAMP, CLAMPS[DEFAULT_CLAMP])
 
 
 def make_fork_screw() -> PartSpec:
@@ -1128,6 +1169,78 @@ def make_max311d() -> PartSpec:
         layer=Layer.BASE,
         prims=tuple(prims),
         description="3-axis flexure stage, 4 mm travel per axis, differential drives and closed-loop piezos.",
+    )
+
+
+# ==========================================================================
+# MC2000B optical chopper head (STEP)
+# ==========================================================================
+# Measured on the vendor STEP file.  Part frame: origin on the table at the
+# centre of the base plate, which is also the centre of its two arc slots, so
+# the head turns about it while screwed down; +x is the beam direction
+# through the blade (from the motor side out through the blade), z up.  The
+# head stands on the table with no post: the 0.400" base plate carries two
+# slots, arcs of radius 1.500" about the origin spanning ±30° about ±y,
+# 0.265" wide for 1/4"-20 cap screws.  On a 1" grid they catch two holes 3"
+# apart with the head centred between them, turned up to 30° either way.
+MC2000B_PLATE_T = 0.400
+MC2000B_SLOT_RADIUS = 1.500
+MC2000B_SLOT_HALF_SPAN = 30.0  # degrees along the arc, each way from its middle
+MC2000B_SLOT_WIDTH = 0.265
+MC2000B_HUB = (0.685, 0.0, 2.923)  # blade centre: x is the blade plane
+MC2000B_BLADE_R = 2.000  # Ø4.0" blade, 0.26 mm thick
+# The blade from the hub out (radii in mm): what fraction of each ring is open.
+# The vendor model's blade has 10 inner and 100 outer slots and a row of 10 near
+# the rim; each slotted ring is open half the time.
+MC2000B_BLADE_RINGS_MM = (
+    (0.00, 17.78, 0.0, "hub"),
+    (17.78, 38.09, 0.5, "inner slots (10)"),
+    (38.09, 39.37, 0.0, "ring"),
+    (39.37, 46.99, 0.5, "outer slots (100)"),
+    (46.99, 48.26, 0.0, "ring"),
+    (48.26, 50.16, 0.5, "rim slots (10)"),
+    (50.16, 50.80, 0.0, "rim"),
+)
+_MC2000B_PLATE_HALF = (  # the plate outline for y >= 0, from the front edge round to the back's notch
+    (1.100, 0.000), (1.100, 1.385), (1.088, 1.460), (1.055, 1.529), (1.002, 1.584), (0.708, 1.736),
+    (0.417, 1.828), (0.191, 1.865), (0.038, 1.875), (-0.191, 1.865), (-0.342, 1.844), (-0.491, 1.810),
+    (-0.708, 1.736), (-0.915, 1.637), (-1.021, 1.567), (-1.080, 1.484), (-1.100, 1.385), (-1.100, 1.127),
+    (-1.086, 1.046), (-1.047, 0.973), (-0.869, 0.756), (-0.751, 0.539), (-0.668, 0.273), (-0.640, 0.000),
+)
+
+
+def mc2000b_plate_outline() -> tuple[tuple[float, float], ...]:
+    upper = _MC2000B_PLATE_HALF
+    lower = tuple((x, -y) for x, y in reversed(upper[1:-1]))
+    return upper + lower
+
+
+def mc2000b_body_prims() -> tuple[Primitive, ...]:
+    """Everything but the blade: base plate, column, motor and the reference sensor."""
+    hub_x, _, hub_z = MC2000B_HUB
+    column_x = (-0.568, 0.670)
+    return (
+        Prism(mc2000b_plate_outline(), 0.0, MC2000B_PLATE_T, "anodized"),
+        Box((column_x[0], -0.638, MC2000B_PLATE_T), (1.032, 0.638, 0.79), "anodized"),  # foot, under the blade
+        Box((0.441, -0.255, 0.79), (0.913, 0.255, 1.38), "anodized"),  # reference sensor round the blade's edge
+        Box((column_x[0], -0.638, MC2000B_PLATE_T), (column_x[1], 0.638, hub_z), "anodized"),  # column
+        Cylinder("x", ((column_x[0] + column_x[1]) / 2, 0.0, hub_z), 0.638, column_x[1] - column_x[0], "anodized"),
+        Cylinder("x", (column_x[0] - 0.640, 0.0, hub_z), 0.588, 1.280, "anodized"),  # motor, behind the column
+    )
+
+
+def mc2000b_blade_prim() -> Primitive:
+    hub_x, hub_y, hub_z = MC2000B_HUB
+    return Cylinder("x", (hub_x, hub_y, hub_z), MC2000B_BLADE_R, 0.0102, "anodized")
+
+
+def make_mc2000b() -> PartSpec:
+    return PartSpec(
+        id="MC2000B",
+        name="MC2000B optical chopper head",
+        layer=Layer.OPTIC,  # it stands from the table to above the beams
+        prims=(*mc2000b_body_prims(), mc2000b_blade_prim()),
+        description="Chopper head with a Ø4\" blade, screwed to the table through the two arc slots in its base.",
     )
 
 
@@ -1404,11 +1517,13 @@ def _build_registry() -> dict[str, PartSpec]:
         make_ph2(z_base=BE1_HEIGHT, part_id="PH2@BE1"),  # PH2 standing on a BE1
         make_be1(),
         make_cf125c(),
+        make_cf038(),
         make_fork_screw(),
         make_tslot_rail(),
         make_tslot_post(),
         make_board(),
         make_max311d(),
+        make_mc2000b(),
         make_sample(),
         make_mrak25(),
         make_km100b(),

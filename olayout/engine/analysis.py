@@ -1,6 +1,6 @@
 """One analysis pass over a layout: place units, resolve forks, validate, trace.
 
-Passes are incremental: builds and world geometry are cached, and pedestal
+Passes are incremental: builds and world geometry are cached, and clamping
 forks are only re-solved near components that changed since the last pass
 (cascading when a re-solved fork actually moves), so dragging one part in a
 large layout stays interactive.
@@ -17,6 +17,7 @@ from olayout.catalog.units import ForkPlacement, Mounting
 from olayout.core.breadboard import Breadboard
 from olayout.core.layout import IssueKey, Layout
 from olayout.engine.fork import resolve_fork
+from olayout.engine.slots import resolve_slots
 from olayout.engine.validation import Issue, IssueKind, find_issues
 from olayout.engine.world import BuildCache, PlacedUnit
 from olayout.optics.tracer import BeamTracer, TraceResult, TraceWarning
@@ -106,6 +107,7 @@ class Analyzer:
         changed_at = self._changed_positions(state)
         everything = board != self._board or not self.incremental
         self._resolve_forks(layout, result, changed_at, everything)
+        self._resolve_slots(layout, result)
         self._state, self._board = state, board
 
         # 3. Placement legality.
@@ -135,7 +137,8 @@ class Analyzer:
         resolved: dict[str, object] = {}  # full base footprints of forks settled this pass
         for comp in layout.components:
             unit = result.units.get(comp.id)
-            if unit is None or unit.unit.mounting is not Mounting.PEDESTAL:
+            if unit is None or unit.mounting is not Mounting.PEDESTAL:
+                self._forks.pop(comp.id, None)  # e.g. a post moved from its clamp into a hole
                 continue
             previous = self._forks.get(comp.id)
             affected = everything or previous is None or any(
@@ -165,6 +168,15 @@ class Analyzer:
         live = {c.id for c in layout.components}
         for stale in set(self._forks) - live:
             del self._forks[stale]
+
+    @staticmethod
+    def _resolve_slots(layout: Layout, result: Analysis) -> None:
+        """The holes each slotted base is screwed to (cheap: nothing to do with its neighbours)."""
+        for comp in layout.components:
+            unit = result.units.get(comp.id)
+            if unit is not None and unit.mounting is Mounting.SLOTS:
+                screws = resolve_slots(comp, unit.unit.slots, layout.breadboard)
+                result.units[comp.id] = PlacedUnit(comp, unit.unit, unit.build, None, screws)
 
     # ---------------------------------------------------------------- beams
     @staticmethod

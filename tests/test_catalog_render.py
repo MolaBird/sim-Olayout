@@ -6,7 +6,7 @@ from shapely.geometry import Point
 
 from olayout.catalog.parts import PARTS, Layer
 from olayout.catalog.primitives import Box, Cylinder, rotation_matrix, transform
-from olayout.catalog.units import UNIT_TYPES, Mounting, default_fork, new_component_params
+from olayout.catalog.units import UNIT_TYPES, Mounting, default_fork, mounting_of, new_component_params
 from olayout.core.layout import Component
 from olayout.engine.world import BuildCache
 from olayout.render.sprites import SpriteCache, render_sprite
@@ -26,14 +26,14 @@ def test_unit_builds_with_defaults(type_id):
     unit = UNIT_TYPES[type_id]
     for orientation in [""] + [name for name, _ in unit.orientations()]:
         comp = Component("c1", type_id, orientation=orientation, params=new_component_params(type_id))
-        fork = default_fork() if unit.mounting is Mounting.PEDESTAL else None
+        fork = default_fork() if mounting_of(comp) is Mounting.PEDESTAL else None
         placed = BuildCache().place(comp, fork)
         if placed.is_virtual:  # a beam source: no mechanical parts
             assert unit.mounting is Mounting.FREE and placed.build.emitters
             continue
         if unit.mounting is not Mounting.FREE:  # held by a post holder or pedestal
             assert placed.footprints[Layer.BASE].area > 0
-        if type_id != "base":
+        if type_id != "post":  # a bare post has nothing on top
             assert placed.footprints[Layer.OPTIC].area > 0
             stops_only = unit.structural or unit.category == "Beam dumps"  # framing and dumps stop beams
             assert placed.build.blockers if stops_only else placed.build.elements

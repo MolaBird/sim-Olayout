@@ -91,10 +91,10 @@ def test_pedestal_fork_reaches_a_hole():
 
 def test_manual_fork_direction_is_respected():
     layout = Layout()
-    comp = make_component(layout, "mirror", 10.0, 9.0)
-    comp.params["fork"] = {"angle": 90.0}
+    comp = make_component(layout, "mirror", 10.0, 9.0, angle=30.0)
+    comp.params["clamp"] = {"angle": 90.0}  # on the table, whichever way the mirror faces
     fork = analyze(layout).units[comp.id].fork
-    assert abs((fork.angle - 90.0 + 180) % 360 - 180) < 35
+    assert abs((fork.angle + comp.angle - 90.0 + 180) % 360 - 180) < 35
 
 
 def test_pedestal_off_board_has_no_hole():

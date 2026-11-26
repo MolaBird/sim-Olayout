@@ -20,8 +20,28 @@ from olayout.core.geometry import Pose
 from olayout.core.units import normalize_angle
 
 FORMAT_NAME = "olayout"
-FORMAT_VERSION = 1
+# 2: a post-mounted component's holder (hole or clamped), clamp and KB1X1 are
+#    its own parameters, so one unit type per mount; drilled holes.
+FORMAT_VERSION = 2
 FILE_SUFFIX = ".olayout.json"
+
+# Functions that bring a component written by an older version up to date
+# (registered by the catalog, which knows the unit types; see
+# ``olayout.catalog.units.upgrade_component``).  Each takes and returns a
+# Component and must leave a current one unchanged.
+_COMPONENT_UPGRADES: list = []
+
+
+def register_component_upgrade(upgrade) -> None:
+    if upgrade not in _COMPONENT_UPGRADES:
+        _COMPONENT_UPGRADES.append(upgrade)
+
+
+def upgrade(comp: "Component") -> "Component":
+    """Apply the registered upgrades to a component read from a file or the clipboard."""
+    for step in _COMPONENT_UPGRADES:
+        comp = step(comp)
+    return comp
 
 
 class LayoutFormatError(ValueError):
@@ -245,7 +265,7 @@ class Layout:
 
         layout = cls(
             breadboard=Breadboard.from_dict(data.get("breadboard", {})),
-            components=[Component.from_dict(c) for c in data.get("components", [])],
+            components=[upgrade(Component.from_dict(c)) for c in data.get("components", [])],
             measurements=[Measurement.from_dict(m) for m in data.get("measurements", [])],
             probes=[Probe.from_dict(p) for p in data.get("probes", [])],
             notes=str(data.get("notes", "")),

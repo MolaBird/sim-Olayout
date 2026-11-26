@@ -137,6 +137,17 @@ def _draw(name: str, p: QPainter) -> None:
         _arrow_head(p, QPointF(58, 34), 0, 9)
         p.setPen(QPen(C.ACCENT, 4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
         p.drawLine(QPointF(21, 23), QPointF(43, 45))
+    elif name == "aim":  # a beam turned by a mirror onto a target
+        p.setPen(QPen(QColor("#ff5a5a"), 4.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        p.drawLine(QPointF(6, 46), QPointF(24, 46))
+        p.drawLine(QPointF(24, 46), QPointF(44, 20))
+        p.setPen(QPen(C.ACCENT, 4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        p.drawLine(QPointF(14, 54), QPointF(32, 38))
+        p.setPen(QPen(C.TEXT, 3.5))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawEllipse(QPointF(46, 17), 9, 9)
+        p.drawLine(QPointF(46, 4), QPointF(46, 30))
+        p.drawLine(QPointF(33, 17), QPointF(59, 17))
     elif name == "ghost":
         p.drawEllipse(QPointF(26, 32), 15, 15)
         p.setPen(QPen(C.TEXT, 4, Qt.PenStyle.DotLine))

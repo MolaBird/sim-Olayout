@@ -141,6 +141,8 @@ class LayoutScene(QGraphicsScene):
             painter.setBrush(QColor(26, 27, 30))
             painter.drawEllipse(QPointF(x, -y), 0.14, 0.14)
 
+        self._draw_drilled(painter, board)
+
         pitch_px = board.pitch * scale
         if pitch_px < 5 or board.columns == 0 or board.rows == 0:
             return
@@ -163,7 +165,20 @@ class LayoutScene(QGraphicsScene):
             for row in range(r0, r1 + 1):
                 y = board.margin + row * board.pitch
                 painter.drawPixmap(transform.map(QPointF(x, -y)) - half, pix)
+        for x, y in board.drilled:
+            painter.drawPixmap(transform.map(QPointF(x, -y)) - half, pix)
         painter.restore()
+
+    @staticmethod
+    def _draw_drilled(painter: QPainter, board) -> None:
+        """A drilled hole: a fresh-machined rim (brighter than the grid's), so it reads as added."""
+        if not board.drilled:
+            return
+        r = board.hole_diameter * 0.78
+        painter.setPen(cosmetic_pen(C.MEASURE, 1.2))
+        painter.setBrush(QColor(22, 23, 26))
+        for x, y in board.drilled:
+            painter.drawEllipse(QPointF(x, -y), r, r)
 
     def drawForeground(self, painter: QPainter, rect: QRectF) -> None:  # noqa: N802
         """Hole column/row numbers along the board edges (constant pixel size)."""

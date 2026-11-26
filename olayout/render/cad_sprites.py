@@ -21,7 +21,7 @@ import hashlib
 import json
 import logging
 import os
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
 import numpy as np
@@ -141,8 +141,10 @@ class CadSprites:
         return part_id in self.registry
 
     def key_for(self, part_id: str, roll=None, z_offset: float = 0.0) -> str | None:
+        """The baked sprite's key.  Seen from above, a part looks the same at
+        any height, so one sprite serves every ``z_offset`` (see :meth:`get`)."""
         source = self.registry.get(part_id)
-        return None if source is None else sprite_key(source, _roll_matrix(roll), z_offset)
+        return None if source is None else sprite_key(source, _roll_matrix(roll), 0.0)
 
     def entry(self, key: str) -> BakedEntry | None:
         return self._index.get(key)
@@ -152,8 +154,14 @@ class CadSprites:
         source = self.registry.get(part_id)
         if source is None:
             return None
-        roll = _roll_matrix(roll)
-        key = sprite_key(source, roll, z_offset)
+        sprite = self._sprite_at_table_height(part_id, source, _roll_matrix(roll))
+        if sprite is None or not z_offset:
+            return sprite
+        # Raising a part changes no pixel of its top view, only how high it stands.
+        return replace(sprite, z_top=sprite.z_top + z_offset)
+
+    def _sprite_at_table_height(self, part_id: str, source: cad.CadSource, roll: np.ndarray) -> Sprite | None:
+        key = sprite_key(source, roll, 0.0)
         entry = self._index.get(key)
         baked = self._load(key, entry) if entry is not None else None
         if part_id in self._failed or not source.readable():
@@ -161,7 +169,7 @@ class CadSprites:
         sha1, renderer = cad.content_sha1(source.path), renderer_stamp(source, self.ppi)
         if baked is not None and (entry.source_sha1, entry.renderer) == (sha1, renderer):
             return baked
-        sprite = self._render(source, roll, z_offset)
+        sprite = self._render(source, roll, 0.0)
         if sprite is None:
             return baked
         self._save(key, sprite, BakedEntry(

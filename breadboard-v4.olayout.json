@@ -1,0 +1,1074 @@
+{
+  "format": "olayout",
+  "version": 2,
+  "units": "inch",
+  "breadboard": {
+    "width": 20.0,
+    "height": 18.0,
+    "pitch": 1.0,
+    "margin": 0.5,
+    "hole_diameter": 0.25,
+    "name": "Custom",
+    "drilled": [
+      [
+        4.0,
+        9.0
+      ],
+      [
+        13.0,
+        9.0
+      ],
+      [
+        15.0,
+        9.0
+      ]
+    ]
+  },
+  "components": [
+    {
+      "id": "c10",
+      "type": "km100cp",
+      "x": 2.5,
+      "y": 15.5,
+      "angle": 337.5,
+      "label": "M3",
+      "params": {
+        "optic": {
+          "kind": "mirror",
+          "roc_mm": 0.0,
+          "focal_length_mm": 100.0,
+          "reflectance": 0.5,
+          "transmittance": 1.0,
+          "thickness_mm": null
+        },
+        "base": {
+          "kind": "hole",
+          "clamp": "CF125C"
+        },
+        "clamp": {
+          "angle": null
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": false,
+          "seated": true
+        }
+      }
+    },
+    {
+      "id": "c11",
+      "type": "collimator",
+      "x": 2.5,
+      "y": 13.5,
+      "angle": 0.0,
+      "label": "FC3",
+      "params": {
+        "source": {
+          "enabled": true,
+          "wavelength_nm": 2923.0,
+          "mfd_um": 10.5,
+          "power_mw": 3.0
+        },
+        "lens": {
+          "focal_length_mm": 5.95,
+          "distance_mm": 5.94
+        },
+        "rods": {
+          "length_in": 1.5
+        },
+        "base": {
+          "kind": "hole",
+          "clamp": "CF125C"
+        },
+        "clamp": {
+          "angle": null
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": false,
+          "seated": true
+        }
+      }
+    },
+    {
+      "id": "c12",
+      "type": "collimator",
+      "x": 2.5,
+      "y": 11.5,
+      "angle": 0.0,
+      "label": "FC4",
+      "params": {
+        "source": {
+          "enabled": true,
+          "wavelength_nm": 632.0,
+          "mfd_um": 4.5,
+          "power_mw": 1.0
+        },
+        "lens": {
+          "focal_length_mm": 11.0,
+          "distance_mm": 11.0
+        },
+        "rods": {
+          "length_in": 1.5
+        },
+        "base": {
+          "kind": "hole",
+          "clamp": "CF125C"
+        },
+        "clamp": {
+          "angle": null
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": false,
+          "seated": true
+        }
+      }
+    },
+    {
+      "id": "c13",
+      "type": "km100cp",
+      "x": 4.5,
+      "y": 13.5,
+      "angle": 157.5,
+      "label": "M4",
+      "orientation": "bottom",
+      "params": {
+        "optic": {
+          "kind": "mirror",
+          "roc_mm": 0.0,
+          "focal_length_mm": 100.0,
+          "reflectance": 0.5,
+          "transmittance": 1.0,
+          "thickness_mm": null
+        },
+        "base": {
+          "kind": "hole",
+          "clamp": "CF125C"
+        },
+        "clamp": {
+          "angle": null
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": false,
+          "seated": true
+        }
+      }
+    },
+    {
+      "id": "c14",
+      "type": "km100cp",
+      "x": 4.5,
+      "y": 4.5,
+      "angle": 202.5,
+      "label": "M5",
+      "orientation": "side",
+      "params": {
+        "optic": {
+          "kind": "mirror",
+          "roc_mm": 0.0,
+          "focal_length_mm": 100.0,
+          "reflectance": 0.5,
+          "transmittance": 1.0,
+          "thickness_mm": null
+        },
+        "base": {
+          "kind": "hole",
+          "clamp": "CF125C"
+        },
+        "clamp": {
+          "angle": null
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": false,
+          "seated": true
+        }
+      }
+    },
+    {
+      "id": "c15",
+      "type": "collimator",
+      "x": 2.5,
+      "y": 4.5,
+      "angle": 0.0,
+      "label": "FC5",
+      "params": {
+        "source": {
+          "enabled": true,
+          "wavelength_nm": 2923.0,
+          "mfd_um": 10.5,
+          "power_mw": 3.0
+        },
+        "lens": {
+          "focal_length_mm": 5.95,
+          "distance_mm": 5.94
+        },
+        "rods": {
+          "length_in": 1.5
+        },
+        "base": {
+          "kind": "hole",
+          "clamp": "CF125C"
+        },
+        "clamp": {
+          "angle": null
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": false,
+          "seated": true
+        }
+      }
+    },
+    {
+      "id": "c16",
+      "type": "collimator",
+      "x": 2.5,
+      "y": 6.5,
+      "angle": 0.0,
+      "label": "FC6",
+      "params": {
+        "source": {
+          "enabled": true,
+          "wavelength_nm": 632.0,
+          "mfd_um": 4.5,
+          "power_mw": 1.0
+        },
+        "lens": {
+          "focal_length_mm": 11.0,
+          "distance_mm": 11.0
+        },
+        "rods": {
+          "length_in": 1.5
+        },
+        "base": {
+          "kind": "hole",
+          "clamp": "CF125C"
+        },
+        "clamp": {
+          "angle": null
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": false,
+          "seated": true
+        }
+      }
+    },
+    {
+      "id": "c17",
+      "type": "km100cp",
+      "x": 5.5,
+      "y": 6.5,
+      "angle": 225.0,
+      "label": "M6",
+      "orientation": "bottom",
+      "params": {
+        "optic": {
+          "kind": "mirror",
+          "roc_mm": 0.0,
+          "focal_length_mm": 100.0,
+          "reflectance": 0.5,
+          "transmittance": 1.0,
+          "thickness_mm": null
+        },
+        "base": {
+          "kind": "hole",
+          "clamp": "CF125C"
+        },
+        "clamp": {
+          "angle": null
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": false,
+          "seated": true
+        }
+      }
+    },
+    {
+      "id": "c18",
+      "type": "pellicle-km100bp",
+      "x": 5.150308,
+      "y": 2.079597,
+      "angle": 45.0,
+      "label": "BS1",
+      "orientation": "side",
+      "params": {
+        "optic": {
+          "reflectance": 0.08
+        },
+        "base": {
+          "kind": "clamped",
+          "clamp": "CF125C"
+        },
+        "clamp": {
+          "angle": 75.69
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": true,
+          "seated": true
+        }
+      }
+    },
+    {
+      "id": "c19",
+      "type": "km100cp",
+      "x": 5.5,
+      "y": 11.5,
+      "angle": 135.0,
+      "label": "M7",
+      "orientation": "side",
+      "params": {
+        "optic": {
+          "kind": "mirror",
+          "roc_mm": 0.0,
+          "focal_length_mm": 100.0,
+          "reflectance": 0.5,
+          "transmittance": 1.0,
+          "thickness_mm": null
+        },
+        "base": {
+          "kind": "hole",
+          "clamp": "CF125C"
+        },
+        "clamp": {
+          "angle": null
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": false,
+          "seated": true
+        }
+      }
+    },
+    {
+      "id": "c20",
+      "type": "pellicle-km100bp",
+      "x": 5.150308,
+      "y": 15.920403,
+      "angle": 315.0,
+      "label": "BS2",
+      "orientation": "bottom",
+      "params": {
+        "optic": {
+          "reflectance": 0.08
+        },
+        "base": {
+          "kind": "clamped",
+          "clamp": "CF125C"
+        },
+        "clamp": {
+          "angle": 284.31
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": true,
+          "seated": true
+        }
+      }
+    },
+    {
+      "id": "c25",
+      "type": "objective",
+      "x": 15.5,
+      "y": 11.5,
+      "angle": 90.0,
+      "label": "OBJ2",
+      "params": {
+        "objective": {
+          "focal_length_mm": 5.0,
+          "working_distance_mm": 7.8,
+          "pupil_mm": 5.1
+        },
+        "base": {
+          "kind": "hole",
+          "clamp": "CF125C"
+        },
+        "clamp": {
+          "angle": null
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": false,
+          "seated": true
+        }
+      }
+    },
+    {
+      "id": "c39",
+      "type": "sample-stage",
+      "x": 17.5,
+      "y": 15.5,
+      "angle": 180.0,
+      "label": "ST1",
+      "params": {
+        "stage": {
+          "face": "x",
+          "focus_mm": 0.0,
+          "lateral_mm": 0.0
+        },
+        "optic": {
+          "kind": "block",
+          "roc_mm": 0.0,
+          "focal_length_mm": 100.0,
+          "reflectance": 0.5,
+          "transmittance": 1.0,
+          "thickness_mm": 1.0
+        },
+        "sample": {
+          "width_mm": 25.4,
+          "standoff_mm": 0.0
+        }
+      }
+    },
+    {
+      "id": "c40",
+      "type": "fmp1",
+      "x": 7.5,
+      "y": 15.5,
+      "angle": 225.0,
+      "label": "M9",
+      "params": {
+        "optic": {
+          "kind": "mirror",
+          "roc_mm": 0.0,
+          "focal_length_mm": 100.0,
+          "reflectance": 0.5,
+          "transmittance": 1.0,
+          "thickness_mm": null
+        },
+        "base": {
+          "kind": "hole",
+          "clamp": "CF038"
+        },
+        "clamp": {
+          "angle": 290.38
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": true,
+          "seated": false
+        }
+      }
+    },
+    {
+      "id": "c43",
+      "type": "fmp1",
+      "x": 7.5,
+      "y": 2.5,
+      "angle": 225.0,
+      "label": "M8",
+      "params": {
+        "optic": {
+          "kind": "mirror",
+          "roc_mm": 0.0,
+          "focal_length_mm": 100.0,
+          "reflectance": 0.5,
+          "transmittance": 1.0,
+          "thickness_mm": null
+        },
+        "base": {
+          "kind": "hole",
+          "clamp": "CF038"
+        },
+        "clamp": {
+          "angle": 288.78
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": true,
+          "seated": false
+        }
+      }
+    },
+    {
+      "id": "c48",
+      "type": "km100cp",
+      "x": 12.5,
+      "y": 2.5,
+      "angle": 146.091495,
+      "label": "M23",
+      "params": {
+        "optic": {
+          "kind": "mirror",
+          "roc_mm": 0.0,
+          "focal_length_mm": 100.0,
+          "reflectance": 0.5,
+          "transmittance": 1.0,
+          "thickness_mm": null
+        },
+        "base": {
+          "kind": "hole",
+          "clamp": "CF125C"
+        },
+        "clamp": {
+          "angle": null
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": false,
+          "seated": true
+        }
+      }
+    },
+    {
+      "id": "c52",
+      "type": "beam-expander-mirrored",
+      "x": 9.935517,
+      "y": 15.5,
+      "angle": 0.0,
+      "label": "BX7"
+    },
+    {
+      "id": "c53",
+      "type": "fmp1",
+      "x": 9.5,
+      "y": 10.5,
+      "angle": 38.265924,
+      "label": "M26",
+      "params": {
+        "optic": {
+          "kind": "mirror",
+          "roc_mm": 0.0,
+          "focal_length_mm": 100.0,
+          "reflectance": 0.5,
+          "transmittance": 1.0,
+          "thickness_mm": null
+        },
+        "base": {
+          "kind": "hole",
+          "clamp": "CF125C"
+        },
+        "clamp": {
+          "angle": null
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": false,
+          "seated": true
+        }
+      }
+    },
+    {
+      "id": "c56",
+      "type": "km100cp",
+      "x": 15.5,
+      "y": 2.5,
+      "angle": 120.315479,
+      "label": "M28",
+      "params": {
+        "optic": {
+          "kind": "mirror",
+          "roc_mm": 0.0,
+          "focal_length_mm": 100.0,
+          "reflectance": 0.5,
+          "transmittance": 1.0,
+          "thickness_mm": null
+        },
+        "base": {
+          "kind": "hole",
+          "clamp": "CF125C"
+        },
+        "clamp": {
+          "angle": null
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": false,
+          "seated": true
+        }
+      }
+    },
+    {
+      "id": "c57",
+      "type": "fmp1",
+      "x": 9.5,
+      "y": 7.5,
+      "angle": 322.63541,
+      "label": "M29",
+      "params": {
+        "optic": {
+          "kind": "mirror",
+          "roc_mm": 0.0,
+          "focal_length_mm": 100.0,
+          "reflectance": 0.5,
+          "transmittance": 1.0,
+          "thickness_mm": null
+        },
+        "base": {
+          "kind": "hole",
+          "clamp": "CF125C"
+        },
+        "clamp": {
+          "angle": null
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": false,
+          "seated": true
+        }
+      }
+    },
+    {
+      "id": "c58",
+      "type": "km100cp",
+      "x": 12.5,
+      "y": 6.5,
+      "angle": 126.89366,
+      "label": "M33",
+      "orientation": "side",
+      "params": {
+        "optic": {
+          "kind": "mirror",
+          "roc_mm": 0.0,
+          "focal_length_mm": 100.0,
+          "reflectance": 0.5,
+          "transmittance": 1.0,
+          "thickness_mm": null
+        },
+        "base": {
+          "kind": "hole",
+          "clamp": "CF125C"
+        },
+        "clamp": {
+          "angle": null
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": false,
+          "seated": true
+        }
+      }
+    },
+    {
+      "id": "c59",
+      "type": "km100cp",
+      "x": 12.5,
+      "y": 15.5,
+      "angle": 205.282343,
+      "label": "M31",
+      "params": {
+        "optic": {
+          "kind": "mirror",
+          "roc_mm": 0.0,
+          "focal_length_mm": 100.0,
+          "reflectance": 0.5,
+          "transmittance": 1.0,
+          "thickness_mm": null
+        },
+        "base": {
+          "kind": "hole",
+          "clamp": "CF125C"
+        },
+        "clamp": {
+          "angle": null
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": false,
+          "seated": true
+        }
+      }
+    },
+    {
+      "id": "c60",
+      "type": "board",
+      "x": 0.5,
+      "y": 0.5,
+      "angle": 0.0,
+      "label": "BD1",
+      "params": {
+        "board": {
+          "length_in": 19.0,
+          "thickness_in": 0.125
+        }
+      }
+    },
+    {
+      "id": "c61",
+      "type": "board",
+      "x": 0.5,
+      "y": 17.5,
+      "angle": 0.0,
+      "label": "BD2",
+      "params": {
+        "board": {
+          "length_in": 14.0,
+          "thickness_in": 0.125
+        }
+      }
+    },
+    {
+      "id": "c62",
+      "type": "board",
+      "x": 0.5,
+      "y": 17.5,
+      "angle": 270.0,
+      "label": "BD3",
+      "params": {
+        "board": {
+          "length_in": 17.0,
+          "thickness_in": 0.125
+        }
+      }
+    },
+    {
+      "id": "c63",
+      "type": "board",
+      "x": 19.5,
+      "y": 12.5,
+      "angle": 270.0,
+      "label": "BD4",
+      "params": {
+        "board": {
+          "length_in": 12.0,
+          "thickness_in": 0.125
+        }
+      }
+    },
+    {
+      "id": "c64",
+      "type": "board",
+      "x": 16.5,
+      "y": 12.5,
+      "angle": 0.0,
+      "label": "BD5",
+      "params": {
+        "board": {
+          "length_in": 3.0,
+          "thickness_in": 0.125
+        }
+      }
+    },
+    {
+      "id": "c65",
+      "type": "board",
+      "x": 14.5,
+      "y": 17.5,
+      "angle": 270.0,
+      "label": "BD6",
+      "params": {
+        "board": {
+          "length_in": 5.0,
+          "thickness_in": 0.125
+        }
+      }
+    },
+    {
+      "id": "c66",
+      "type": "pellicle-bp207",
+      "x": 15.5,
+      "y": 8.5,
+      "angle": 45.0,
+      "label": "BS4",
+      "params": {
+        "optic": {
+          "reflectance": 0.08
+        },
+        "base": {
+          "kind": "hole",
+          "clamp": "CF125C"
+        },
+        "clamp": {
+          "angle": null
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": true,
+          "seated": true
+        }
+      }
+    },
+    {
+      "id": "c67",
+      "type": "pellicle-km200bp",
+      "x": 15.375,
+      "y": 5.125,
+      "angle": 45.0,
+      "label": "BS5",
+      "orientation": "side",
+      "params": {
+        "optic": {
+          "reflectance": 0.08
+        },
+        "base": {
+          "kind": "clamped",
+          "clamp": "CF125C"
+        },
+        "clamp": {
+          "angle": null
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": true,
+          "seated": true
+        }
+      }
+    },
+    {
+      "id": "c68",
+      "type": "km100cp",
+      "x": 4.0,
+      "y": 9.0,
+      "angle": 345.274736,
+      "label": "M32",
+      "params": {
+        "optic": {
+          "kind": "mirror",
+          "roc_mm": 0.0,
+          "focal_length_mm": 100.0,
+          "reflectance": 0.5,
+          "transmittance": 1.0,
+          "thickness_mm": null
+        },
+        "base": {
+          "kind": "hole",
+          "clamp": "CF125C"
+        },
+        "clamp": {
+          "angle": null
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": false,
+          "seated": true
+        }
+      }
+    },
+    {
+      "id": "c70",
+      "type": "beam-expander-mirrored",
+      "x": 10.012,
+      "y": 2.549363,
+      "angle": 0.0,
+      "label": "BX8"
+    },
+    {
+      "id": "c71",
+      "type": "km100cp",
+      "x": 2.5,
+      "y": 2.5,
+      "angle": 22.5,
+      "label": "M34",
+      "orientation": "side",
+      "params": {
+        "optic": {
+          "kind": "mirror",
+          "roc_mm": 0.0,
+          "focal_length_mm": 100.0,
+          "reflectance": 0.5,
+          "transmittance": 1.0,
+          "thickness_mm": null
+        },
+        "base": {
+          "kind": "hole",
+          "clamp": "CF125C"
+        },
+        "clamp": {
+          "angle": null
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": false,
+          "seated": true
+        }
+      }
+    },
+    {
+      "id": "c72",
+      "type": "knife-edge",
+      "x": 12.352,
+      "y": 9.0,
+      "angle": 180.0,
+      "label": "KE2",
+      "params": {
+        "base": {
+          "kind": "clamped",
+          "clamp": "CF125C"
+        },
+        "clamp": {
+          "angle": null
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": false,
+          "seated": true
+        }
+      }
+    },
+    {
+      "id": "c73",
+      "type": "chopper",
+      "x": 10.0,
+      "y": 12.5,
+      "angle": 240.0,
+      "label": "CH1",
+      "params": {
+        "chopper": {
+          "beam_height_in": 3.5
+        }
+      }
+    },
+    {
+      "id": "c74",
+      "type": "km100cp",
+      "x": 12.5,
+      "y": 11.5,
+      "angle": 233.074299,
+      "label": "M35",
+      "params": {
+        "optic": {
+          "kind": "mirror",
+          "roc_mm": 0.0,
+          "focal_length_mm": 100.0,
+          "reflectance": 0.5,
+          "transmittance": 1.0,
+          "thickness_mm": null
+        },
+        "base": {
+          "kind": "hole",
+          "clamp": "CF125C"
+        },
+        "clamp": {
+          "angle": null
+        },
+        "post": {
+          "thumbscrew": "right"
+        },
+        "kb1x1": {
+          "present": false,
+          "seated": true
+        }
+      }
+    }
+  ],
+  "measurements": [
+    {
+      "id": "m1",
+      "a": [
+        4.743054,
+        9.123929
+      ],
+      "b": [
+        4.675445,
+        8.88014
+      ]
+    },
+    {
+      "id": "m2",
+      "a": [
+        12.443683,
+        9.233683
+      ],
+      "b": [
+        12.462575,
+        8.731264
+      ]
+    }
+  ],
+  "probes": [],
+  "notes": "Two 2923 nm beams (HeNe tracers) combined on knife edge KE1, 57 um apart on the sample.\n1 Co-align one arm at a time on the alignment board below this one: seat its pick-off (M9 top / M8 bottom, K);\n  both send their sample straight down off the bottom edge at x = 7.5\".\n  HeNe: walk M7+BS2 (M6+BS1). 2923: walk M4+M3 (M5+M2). Lift the pick-off.\n2 Per arm, M20 (M21) does the walking: tilt it to place that arm's spot (10 um per mrad);\n  slide it along its incoming beam to move that arm on KE1 and in the pupil (1:1, the spot stays).\n3 M22+M23 walk both beams onto the objective together.\n4 Slide KE1 along the beams to make them cross in the pupil: 1 mm per mm, the spots do not move.\nSee docs/alignment.md.",
+  "ignored": [
+    {
+      "kind": "off-board",
+      "components": [
+        "c39"
+      ],
+      "layer": "base"
+    },
+    {
+      "kind": "overlap",
+      "components": [
+        "c10",
+        "c11"
+      ],
+      "layer": "optic"
+    },
+    {
+      "kind": "overlap",
+      "components": [
+        "c11",
+        "c12"
+      ],
+      "layer": "optic"
+    },
+    {
+      "kind": "overlap",
+      "components": [
+        "c15",
+        "c16"
+      ],
+      "layer": "optic"
+    },
+    {
+      "kind": "overlap",
+      "components": [
+        "c73",
+        "c74"
+      ],
+      "layer": "base"
+    },
+    {
+      "kind": "overlap",
+      "components": [
+        "c73",
+        "c74"
+      ],
+      "layer": "optic"
+    }
+  ]
+}

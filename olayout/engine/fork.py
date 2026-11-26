@@ -1,28 +1,28 @@
-"""Choose where a pedestal base's CF125C clamping fork points.
+"""Choose where a clamped post's clamping fork points.
 
-A pedestal base can stand anywhere; its fork swivels 360 degrees around the
-BE1 adapter and the captive screw slides along the slot, so the base is
-legal when some breadboard hole lies within the slot's reach.  Among the
-reachable holes we pick the best one:
+A post holder on a BE1 pedestal can stand anywhere: its clamping fork (a
+CF125C, or the short CF038) swivels 360 degrees around the pedestal and the
+captive screw slides along the slot, so the post is legal when some
+breadboard hole (a grid hole or a drilled one) lies within the slot's reach.
+Among the reachable holes we pick the best one:
 
 * automatic mode prefers forks that do not hit other bases, point behind
   the optic, keep the screw mid-slot, and stay where they were last time
   (so forks don't flicker while you drag things around);
-* with a preferred angle set by the user, the hole closest to that
-  direction wins.
+* with a direction set by the user (on the table, so it stays put while the
+  optic turns), the reachable hole closest to that direction wins.
 """
 
 from __future__ import annotations
 
 import math
-from functools import lru_cache
 
 import numpy as np
 import shapely
 from shapely.geometry import box
 
 from olayout.catalog import parts as P
-from olayout.catalog.units import ForkPlacement, default_fork, get_param
+from olayout.catalog.units import ForkPlacement, clamp_angle, clamp_footprint, clamp_of
 from olayout.core.breadboard import Breadboard
 from olayout.core.geometry import Pose, transform_geometry
 from olayout.core.layout import Component
@@ -31,22 +31,30 @@ AUTO_PREFERRED = 180.0  # behind the optic, in the unit frame
 OVERLAP_AREA = 1e-4  # square inches
 
 
-@lru_cache(maxsize=1)
-def _fork_shape():
-    """Fork + screw head footprint in the fork frame (slot along +x)."""
-    return P.get_part("CF125C").footprint()
-
-
 def _angle_diff(a: float, b: float) -> float:
     return abs((a - b + 180.0) % 360.0 - 180.0)
 
 
 def preferred_angle(comp: Component) -> float | None:
-    value = get_param(comp.params, "fork.angle", None)
-    try:
-        return None if value is None else float(value)
-    except (TypeError, ValueError):
+    """The clamp direction the user set, in the unit frame (None: automatic)."""
+    world = clamp_angle(comp)
+    return None if world is None else world - comp.angle
+
+
+def reachable_holes(comp: Component, board: Breadboard) -> np.ndarray:
+    """Every hole (grid or drilled) the clamp's screw can reach from this post."""
+    r_lo, r_hi = P.clamp_spec(clamp_of(comp)).screw_travel
+    return board.holes_in_annulus(comp.x, comp.y, r_lo, r_hi)
+
+
+def hole_toward(comp: Component, board: Breadboard, angle: float) -> tuple[float, float] | None:
+    """The reachable hole closest to the direction ``angle`` (degrees, on the table)."""
+    holes = reachable_holes(comp, board)
+    if len(holes) == 0:
         return None
+    directions = np.degrees(np.arctan2(holes[:, 1] - comp.y, holes[:, 0] - comp.x))
+    best = int(np.argmin([_angle_diff(float(d), angle) for d in directions]))
+    return float(holes[best, 0]), float(holes[best, 1])
 
 
 def resolve_fork(
@@ -55,23 +63,23 @@ def resolve_fork(
     obstacles: list,
     previous: float | None = None,
 ) -> ForkPlacement:
-    """Pick the fork direction/screw position for one pedestal base.
+    """Pick the fork direction and screw position for one clamped post.
 
     ``obstacles`` are world-frame base-layer footprints of *other* components.
     ``previous`` is the angle chosen last time (unit frame), if any.
     """
+    clamp = clamp_of(comp)
     manual = preferred_angle(comp)
     preferred = AUTO_PREFERRED if manual is None else manual
-    r_lo, r_hi = P.cf125c_screw_range()
+    r_lo, r_hi = P.clamp_spec(clamp).screw_travel
     r_mid = (r_lo + r_hi) / 2
     holes = board.holes_in_annulus(comp.x, comp.y, r_lo, r_hi)
     if len(holes) == 0:
-        fallback = default_fork()
-        return ForkPlacement(angle=preferred, screw_distance=fallback.screw_distance, hole=None)
+        return ForkPlacement(angle=preferred, screw_distance=r_mid, hole=None, clamp=clamp)
 
     tree = shapely.STRtree(obstacles) if obstacles else None
     board_rect = box(0.0, 0.0, board.width, board.height)
-    shape = _fork_shape()
+    shape = clamp_footprint(clamp)
     best: tuple[float, ForkPlacement] | None = None
     for hx, hy in holes:
         world_angle = math.degrees(math.atan2(hy - comp.y, hx - comp.x))
@@ -95,5 +103,5 @@ def resolve_fork(
         score += 300.0 * (off_board > OVERLAP_AREA) + 2.0 * abs(dist - r_mid)
 
         if best is None or score < best[0]:
-            best = (score, ForkPlacement(angle=rel, screw_distance=dist, hole=(float(hx), float(hy))))
+            best = (score, ForkPlacement(angle=rel, screw_distance=dist, hole=(float(hx), float(hy)), clamp=clamp))
     return best[1]

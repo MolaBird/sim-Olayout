@@ -1,5 +1,6 @@
-"""Interaction tools for the canvas (select/move/rotate, measure, probe, place,
-combine two beams with a beamsplitter).
+"""Interaction tools for the canvas (select/move/rotate, measure, probe, place
+and put mounts on posts, combine two beams with a beamsplitter, aim a beam at
+a point, turn a clamp, drill holes).
 
 The view forwards mouse/key events to the active tool with both the scene
 position and the model position (inches, y up).
@@ -17,14 +18,45 @@ from PySide6.QtGui import QColor, QKeyEvent, QMouseEvent, QPainterPath
 from PySide6.QtWidgets import QGraphicsPathItem, QGraphicsRectItem
 
 from olayout.catalog.parts import Layer
-from olayout.catalog.units import Mounting, default_fork, get_unit_type, new_component_params, set_param
+from olayout.catalog.units import (
+    BARE_POST,
+    BASE_KIND_FIELD,
+    CLAMP_ANGLE_FIELD,
+    KB1X1_PRESENT,
+    KB1X1_SEATED,
+    Mounting,
+    clamp_of,
+    default_fork,
+    get_unit_type,
+    has_kb1x1,
+    is_clamped,
+    library_entry,
+    mount_on_post_params,
+    mounting_of,
+    new_component_params,
+    set_param,
+    stands_on_post,
+)
 from olayout.core.layout import Component
+from olayout.core.units import normalize_angle
+from olayout.engine.aim import (
+    AimError,
+    AimPlan,
+    AimRoute,
+    aim_route,
+    beam_key,
+    find_beam,
+    leaving_component,
+    plan_aim,
+    turn_toward,
+)
 from olayout.engine.analysis import Analyzer
 from olayout.engine.combine import CombineError, CombinePlan, plan_combiner, splitter_element
-from olayout.engine.fork import resolve_fork
+from olayout.engine.fork import hole_toward, reachable_holes, resolve_fork
+from olayout.engine.slots import resolve_slots
 from olayout.optics.tracer import BeamSegment, TraceResult
 from olayout.ui.canvas.items import Z_OVERLAY, ComponentLayerItem, MeasurementItem, cosmetic_pen, to_scene
-from olayout.ui.canvas.snapping import SNAP_PX, MemberSnapper, SnapResult, aim_angle, constrain_angle
+from olayout.ui.canvas.snapping import SNAP_PX, MemberSnapper, SnapResult, constrain_angle
 from olayout.ui.theme import C
 
 if TYPE_CHECKING:
@@ -36,7 +68,29 @@ CTRL = Qt.KeyboardModifier.ControlModifier
 SHIFT = Qt.KeyboardModifier.ShiftModifier
 ALT = Qt.KeyboardModifier.AltModifier
 DRAG_THRESHOLD_PX = 4.0
+ROTATE_MAGNET_PX = 6.0  # the rotation handle is pulled onto 15° steps within this many pixels
+ATTACH_RADIUS = 0.4  # inches: a mount dropped this close to a bare post goes onto it
+DRILL_RADIUS = 0.35  # inches: the cursor this close to a cell centre (or a drilled hole) targets it
 SNAP_COLORS = {"hole": C.ACCENT, "beam": C.PROBE, "crossing": C.MEASURE}  # snap-indicator ring per snap kind
+TARGET_COLORS = {"hole": C.ACCENT, "point": C.MEASURE, "grid": C.PROBE, "free": C.TEXT}  # where a beam is aimed
+
+
+def dashed_line_item(color: QColor) -> QGraphicsPathItem:
+    """A dashed overlay line (a picked beam, a preview), hidden until given a path."""
+    item = QGraphicsPathItem()
+    item.setPen(cosmetic_pen(color, 2.0, Qt.PenStyle.DashLine))
+    item.setZValue(Z_OVERLAY - 1)
+    item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+    item.setVisible(False)
+    return item
+
+
+def line_path(*points: tuple[float, float]) -> QPainterPath:
+    """A polyline through model points."""
+    path = QPainterPath(to_scene(*points[0]))
+    for point in points[1:]:
+        path.lineTo(to_scene(*point))
+    return path
 
 
 class Tool:
@@ -120,7 +174,7 @@ class SelectTool(Tool):
         self.start_poses: dict[str, tuple[float, float, float]] = {}
         self.beam_targets: TraceResult | None = None
         self.lock_to_holes = False
-        self.aim: tuple[tuple[float, float], tuple[float, float]] | None = None
+        self.aim: tuple[BeamSegment, TraceResult] | None = None  # the beam Alt + handle aims
         self.band: QGraphicsRectItem | None = None
         self.band_base: list[str] = []
 
@@ -132,16 +186,14 @@ class SelectTool(Tool):
         handle = overlay.handle_pos(self.scale)
         return math.hypot(handle.x() - scene_pos.x(), handle.y() - scene_pos.y()) * self.scale <= 9.0
 
-    def _incoming_beam(self, comp_id: str):
-        """The beam a mount's optic reflects, for aiming with Alt.  Only single-optic
-        units aim: their angle is the optic's normal (a beam expander's is not)."""
-        placed = self.doc.analysis.units.get(comp_id)
-        if placed is None or len(placed.build.elements) != 1:
-            return None
-        for seg in self.doc.analysis.trace.segments:
-            if seg.end_owner == comp_id and seg.end_event in ("reflect", "split"):
-                return seg.direction, seg.end
-        return None
+    def _outgoing_beam(self, comp_id: str):
+        """The beam Alt + handle aims at the cursor: the first beam the component
+        reflects, else the first that leaves it (e.g. a source's)."""
+        trace = self.doc.analysis.trace
+        leaving = [s for s in trace.segments if leaving_component(trace, s) == comp_id]
+        reflected = [s for s in leaving if beam_key(trace, s).steps[-1:] == ((comp_id, "reflected"),)]
+        chosen = (reflected or leaving or [None])[0]
+        return None if chosen is None else (chosen, trace)
 
     # -------------------------------------------------------------- events
     def press(self, ev, scene_pos, mx, my):
@@ -152,7 +204,7 @@ class SelectTool(Tool):
             comp = self.doc.selected_components()[0]
             self.mode = "rotate"
             self.start_poses = {comp.id: (comp.x, comp.y, comp.angle)}
-            self.aim = self._incoming_beam(comp.id)
+            self.aim = self._outgoing_beam(comp.id)
             self.doc.begin_interaction()
             return
 
@@ -224,6 +276,7 @@ class SelectTool(Tool):
             self.scene.snap_indicator.setVisible(False)
         elif mode == "rotate":
             self.doc.end_interaction("Rotate")
+            self.scene.hover_label.setVisible(False)
         elif mode == "band" and self.band is not None:
             self.scene.removeItem(self.band)
             self.band = None
@@ -233,6 +286,7 @@ class SelectTool(Tool):
             if self.mode in ("drag", "rotate"):
                 self.doc.cancel_interaction()
                 self.scene.snap_indicator.setVisible(False)
+                self.scene.hover_label.setVisible(False)
             elif self.mode == "band" and self.band is not None:
                 self.scene.removeItem(self.band)
                 self.band = None
@@ -251,7 +305,7 @@ class SelectTool(Tool):
         self.start_poses = {c.id: (c.x, c.y, c.angle) for c in comps}
         others = [u for cid, u in self.doc.analysis.units.items() if cid not in self.start_poses]
         self.beam_targets = Analyzer.trace(others, self.doc.layout)
-        self.lock_to_holes = any(get_unit_type(c.type).mounting is Mounting.HOLE for c in comps)
+        self.lock_to_holes = any(mounting_of(c) in (Mounting.HOLE, Mounting.SLOTS) for c in comps)
         self.scene.hover_label.setVisible(False)
 
     def _drag_to(self, mx: float, my: float, mods) -> None:
@@ -261,9 +315,11 @@ class SelectTool(Tool):
         ax0, ay0, _ = self.start_poses[self.anchor_id]
         raw_x = ax0 + mx - self.press_model[0]
         raw_y = ay0 + my - self.press_model[1]
-        snap = self.view.snapper.component(anchor, raw_x, raw_y, self.scale, self.beam_targets, bool(mods & ALT))
+        snap = self.view.snapper.component(
+            anchor, raw_x, raw_y, self.scale, self.beam_targets, disabled=bool(mods & ALT), grid=bool(mods & CTRL)
+        )
         dx, dy = snap.x - ax0, snap.y - ay0
-        anchor_on_holes = get_unit_type(anchor.type).mounting is Mounting.HOLE
+        anchor_on_holes = mounting_of(anchor) in (Mounting.HOLE, Mounting.SLOTS)
         if self.lock_to_holes and not anchor_on_holes:
             pitch = self.doc.layout.breadboard.pitch
             dx, dy = round(dx / pitch) * pitch, round(dy / pitch) * pitch
@@ -280,13 +336,22 @@ class SelectTool(Tool):
         if comp is None:
             return
         angle = None
-        if mods & ALT and self.aim is not None:
-            angle = aim_angle(self.aim[0], self.aim[1], (mx, my))
+        if mods & ALT and self.aim is not None:  # turn so the beam passes the cursor exactly
+            segment, trace = self.aim
+            angle = turn_toward(comp, segment, (mx, my), trace, self.doc.analyzer.cache)
+            if angle is None:
+                return  # out of reach: stay put
         if angle is None:
             raw = math.degrees(math.atan2(my - y0, mx - x0))
-            angle = self.view.snapper.rotation(raw, free=bool(mods & SHIFT), fine=bool(mods & CTRL))
-        comp.angle = angle % 360.0
+            reach_px = max(math.hypot(mx - x0, my - y0) * self.scale, 1.0)
+            magnet = min(3.0, max(1.0, math.degrees(ROTATE_MAGNET_PX / reach_px)))
+            angle = self.view.snapper.rotation(raw, free=bool(mods & SHIFT), fine=bool(mods & CTRL), magnet=magnet)
+        comp.angle = round(angle % 360.0, 6)
         self.doc.interaction_changed({cid})
+        label = self.scene.hover_label
+        label.set_text(f"{normalize_angle(comp.angle):.1f}°")
+        label.setPos(to_scene(mx, my) + QPointF(14.0 / self.scale, -14.0 / self.scale))
+        label.setVisible(True)
 
     def _hover(self, scene_pos: QPointF, mx: float, my: float) -> None:
         on_handle = self._on_handle(scene_pos)
@@ -409,21 +474,43 @@ class ProbeTool(Tool):
 # Place (ghost follows the cursor)
 # ==========================================================================
 class PlaceTool(Tool):
-    """Place a unit where you click.  A straight member (a rail, a board) is
-    drawn instead: press at one end, release at the other; the tool stays on
-    for the next one until Esc or a right-click."""
+    """Place a unit where you click.  A mount (a mirror, a splitter, a
+    collimator...) clicked onto a bare post goes onto that post; elsewhere it
+    comes on a post of its own.  A KB1X1 clicked onto a post goes under its
+    mount.  A straight member (a rail, a board) is drawn instead: press at one
+    end, release at the other; the tool stays on for the next one until Esc
+    or a right-click.
+
+    ``move_from``: carry the mount of that component (and its settings) to
+    another post, leaving its post behind."""
 
     name = "place"
     cursor = Qt.CursorShape.CrossCursor
     MIN_DRAWN = 0.25  # inches: a shorter drag is a click, which places the default length
 
-    def __init__(self, view: LayoutView, type_id: str, angle: float = 0.0):
+    def __init__(self, view: LayoutView, key: str, angle: float = 0.0, move_from: str | None = None):
         super().__init__(view)
-        self.type_id = type_id
-        self.comp = Component(id="__ghost__", type=type_id, angle=angle, params=new_component_params(type_id))
+        source = self.doc.layout.component(move_from) if move_from else None
+        self.entry = library_entry(source.type if source is not None else key)
+        self.type_id = self.entry.type_id
+        self.move_from = move_from if source is not None else None
+        if source is not None:
+            self.type_id = source.type
+            params = copy.deepcopy(source.params)
+            set_param(params, KB1X1_PRESENT.key, False)  # the KB1X1 stays on the old post
+            set_param(params, CLAMP_ANGLE_FIELD.key, None)
+            angle, orientation, label = source.angle, source.orientation, source.label
+        else:
+            params, orientation, label = self.entry.initial_params(), "", ""
+        self.own_params = params  # what it is when not on a post
+        self.angle = angle
+        self.comp = Component(
+            id="__ghost__", type=self.type_id, angle=angle, label=label, orientation=orientation, params=copy.deepcopy(params)
+        )
+        self.post_id: str | None = None  # the post it would go onto
         self.items: dict[Layer, ComponentLayerItem] = {}
         self.has_position = False
-        unit = get_unit_type(type_id)
+        unit = get_unit_type(self.type_id)
         self.length_key = unit.length_key
         self.members = MemberSnapper(view.snapper)
         self.drawing_from: tuple[float, float] | None = None  # the first end, while a member is drawn
@@ -431,6 +518,13 @@ class PlaceTool(Tool):
             default = unit.member_length(self.comp.params)
             self.hint = (f"Draw a {unit.name.split(',')[0].lower()}: drag from one end to the other "
                          f"(click: {default:g}\" long · Shift: any angle · Alt: no snapping · Esc: done)")
+        elif source is not None:
+            self.hint = f"Move {label or 'the mount'}: click a bare post, or anywhere for a new post (Esc: cancel)"
+        elif self.entry.kb1x1_only:
+            self.hint = "KB1X1: click a post to put it under its mount, or anywhere for a new post with one"
+        elif self.entry.mounts_on_posts:
+            self.hint = (f"{self.entry.name}: click a bare post to put it on, or anywhere on a new post "
+                         "(Q/E rotate · F orientation · Shift-click: keep placing · Esc)")
 
     def activate(self):
         super().activate()
@@ -448,23 +542,70 @@ class PlaceTool(Tool):
         self.items.clear()
 
     def _refresh_geometry(self) -> None:
-        unit = get_unit_type(self.type_id)
-        fork = None
-        if unit.mounting is Mounting.PEDESTAL:
-            fork = resolve_fork(self.comp, self.doc.layout.breadboard, []) if self.has_position else default_fork()
-        placed = self.doc.analyzer.cache.place(self.comp, fork)
+        fork = screws = None
+        mounting = mounting_of(self.comp)
+        if mounting is Mounting.PEDESTAL:
+            if self.has_position:
+                fork = resolve_fork(self.comp, self.doc.layout.breadboard, [])
+            else:
+                fork = default_fork(clamp_of(self.comp))
+        elif mounting is Mounting.SLOTS and self.has_position:
+            screws = resolve_slots(self.comp, get_unit_type(self.comp.type).slots, self.doc.layout.breadboard)
+        placed = self.doc.analyzer.cache.place(self.comp, fork, screws=screws)
         for item in self.items.values():
             item.set_geometry(placed)
             item.set_pose(self.comp.x, self.comp.y, self.comp.angle)
 
+    # ------------------------------------------------------------ posts
+    def _post_near(self, mx: float, my: float) -> Component | None:
+        """The post this would go onto, dropped at (mx, my)."""
+        if not (self.entry.mounts_on_posts or self.move_from):
+            return None
+        best, best_d = None, ATTACH_RADIUS
+        for comp in self.doc.layout.components:
+            if comp.id == self.move_from or not stands_on_post(comp.type):
+                continue
+            fits = not has_kb1x1(comp) if self.entry.kb1x1_only and not self.move_from else comp.type == BARE_POST
+            d = math.hypot(comp.x - mx, comp.y - my)
+            if fits and d <= best_d:
+                best, best_d = comp, d
+        return best
+
+    def _go_onto(self, post: Component | None) -> None:
+        """Make the ghost what it would be on ``post`` (None: on a post of its own)."""
+        self.post_id = post.id if post is not None else None
+        ghost = self.comp
+        if post is None:
+            ghost.type, ghost.params, ghost.angle = self.type_id, copy.deepcopy(self.own_params), self.angle
+            return
+        ghost.x, ghost.y = post.x, post.y
+        if self.entry.kb1x1_only and not self.move_from:  # the post as it would be, with a KB1X1 under its mount
+            ghost.type, ghost.angle, ghost.orientation = post.type, post.angle, post.orientation
+            ghost.params = copy.deepcopy(post.params)
+            set_param(ghost.params, KB1X1_PRESENT.key, True)
+            set_param(ghost.params, KB1X1_SEATED.key, True)
+        else:
+            ghost.type, ghost.angle = self.type_id, self.angle
+            ghost.params = mount_on_post_params(post, self.type_id, self.own_params)
+
     def move_to(self, mx: float, my: float, mods=Qt.KeyboardModifier.NoModifier) -> None:
-        snap = self.view.snapper.component(self.comp, mx, my, self.scale, self.doc.analysis.trace, bool(mods & ALT))
-        self.comp.x, self.comp.y = snap.x, snap.y
+        post = self._post_near(mx, my)
+        self._go_onto(post)
+        if post is not None:
+            self.scene.snap_indicator.show_at(post.x, post.y, color=C.OK)
+            self.view.show_hint(f"Release / click: onto {post.label or 'the post'}")
+        else:
+            snap = self.view.snapper.component(
+                self.comp, mx, my, self.scale, self.doc.analysis.trace, disabled=bool(mods & ALT), grid=bool(mods & CTRL)
+            )
+            self.comp.x, self.comp.y = snap.x, snap.y
+            self.show_snap(snap)
+            if self.hint:
+                self.view.show_hint(self.hint)
         self.has_position = True
         self._refresh_geometry()
         for item in self.items.values():
             item.setVisible(item.has_content())
-        self.show_snap(snap)
 
     def move(self, ev, scene_pos, mx, my):
         if self.drawing_from is not None:
@@ -486,7 +627,7 @@ class PlaceTool(Tool):
             return
         self.move_to(mx, my, ev.modifiers())
         self.place()
-        if not ev.modifiers() & SHIFT:
+        if self.move_from or not ev.modifiers() & SHIFT:
             self.view.set_tool("select")
 
     def release(self, ev, scene_pos, mx, my):
@@ -500,15 +641,21 @@ class PlaceTool(Tool):
         self._set_length(get_unit_type(self.type_id).member_length(new_component_params(self.type_id)))
         self.view.setFocus()
 
-    def place(self) -> str:
-        return self.doc.add_component(
-            self.type_id,
-            self.comp.x,
-            self.comp.y,
-            self.comp.angle,
-            params=copy.deepcopy(self.comp.params),  # the ghost keeps changing: never share its dicts
-            orientation=self.comp.orientation,
-        )
+    def place(self) -> str | None:
+        """Put it down where the ghost is; returns the id of the component it went into."""
+        doc, ghost = self.doc, self.comp
+        if self.move_from:
+            at = (ghost.x, ghost.y, ghost.angle)
+            return doc.move_mount(self.move_from, self.post_id, at=at)
+        own = copy.deepcopy(self.own_params)  # the ghost keeps changing: never share its dicts
+        if self.post_id is not None:
+            if self.entry.kb1x1_only:
+                doc.set_kb1x1([self.post_id], True)
+                doc.set_selection([self.post_id])
+            else:
+                doc.mount_on_post(self.post_id, self.type_id, own, orientation=ghost.orientation, angle=ghost.angle)
+            return self.post_id
+        return doc.add_component(self.type_id, ghost.x, ghost.y, ghost.angle, params=own, orientation=ghost.orientation)
 
     # ------------------------------------------------- drawing a straight member
     def _no_snap(self, mods) -> bool:
@@ -516,6 +663,7 @@ class PlaceTool(Tool):
 
     def _set_length(self, length: float) -> None:
         set_param(self.comp.params, self.length_key, round(length, 6))
+        set_param(self.own_params, self.length_key, round(length, 6))
         self._refresh_geometry()
 
     def _start_at(self, mx: float, my: float, mods) -> None:
@@ -535,19 +683,21 @@ class PlaceTool(Tool):
         dx, dy = snap.x - start[0], snap.y - start[1]
         length = math.hypot(dx, dy)
         if length >= self.MIN_DRAWN:
-            self.comp.angle = math.degrees(math.atan2(dy, dx)) % 360.0
+            self.comp.angle = self.angle = math.degrees(math.atan2(dy, dx)) % 360.0
             self._set_length(length)
         self.show_snap(snap)
         return length
 
     # Rotation / orientation keys arrive through the main window's actions.
     def rotate(self, delta: float) -> None:
-        self.comp.angle = (self.comp.angle + delta) % 360.0
+        self.angle = round((self.angle + delta) % 360.0, 6)
+        if self.comp.type == self.type_id:  # not the post a KB1X1 is going onto
+            self.comp.angle = self.angle
         self._refresh_geometry()
 
     def cycle_orientation(self) -> None:
         options = [name for name, _ in get_unit_type(self.type_id).orientations()]
-        if len(options) > 1:
+        if len(options) > 1 and self.comp.type == self.type_id:
             current = self.comp.orientation or options[0]
             index = options.index(current) if current in options else 0
             self.comp.orientation = options[(index + 1) % len(options)]
@@ -570,26 +720,31 @@ class CombineTool(Tool):
 
     name = "combine"
     cursor = Qt.CursorShape.CrossCursor
-    NEW_SPLITTER = "mag-km-pellicle"
+    NEW_SPLITTER = "pellicle-km100bp"  # on a KB1X1, on a clamped post (it can stand anywhere)
     PREVIEW_LENGTH = 2.5  # inches of the combined beam drawn beyond the splitter
 
     def __init__(self, view: LayoutView):
         super().__init__(view)
         target = self._selected_splitter()
         self.existing = target is not None
-        self.target = target or Component(
-            id="__combine__", type=self.NEW_SPLITTER, params=new_component_params(self.NEW_SPLITTER)
-        )
+        self.target = target or Component(id="__combine__", type=self.NEW_SPLITTER, params=self._new_splitter_params())
         self.others: list = []
         self.trace = TraceResult()
         self.first: BeamSegment | None = None
         self.plans: dict[tuple[int, int], CombinePlan | CombineError] = {}
         self._retrace()
         self.ghost: dict[Layer, ComponentLayerItem] = {}
-        self.first_line = self._path_item(C.ACCENT)
-        self.output_line = self._path_item(C.PROBE)
+        self.first_line = dashed_line_item(C.ACCENT)
+        self.output_line = dashed_line_item(C.PROBE)
         self._listening = False
         self.hint = self._step_hint()
+
+    @classmethod
+    def _new_splitter_params(cls) -> dict:
+        params = new_component_params(cls.NEW_SPLITTER)
+        set_param(params, BASE_KIND_FIELD.key, "clamped")
+        set_param(params, KB1X1_PRESENT.key, True)
+        return params
 
     def _retrace(self) -> None:
         """The beams as they would be without the splitter being placed."""
@@ -604,15 +759,6 @@ class CombineTool(Tool):
             return None
         placed = self.doc.analysis.units.get(selected[0].id)
         return selected[0] if placed is not None and splitter_element(placed.build) is not None else None
-
-    @staticmethod
-    def _path_item(color: QColor) -> QGraphicsPathItem:
-        item = QGraphicsPathItem()
-        item.setPen(cosmetic_pen(color, 2.0, Qt.PenStyle.DashLine))
-        item.setZValue(Z_OVERLAY - 1)
-        item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
-        item.setVisible(False)
-        return item
 
     def _step_hint(self) -> str:
         what = (self.target.label or "the selected splitter") if self.existing else "a new pellicle beamsplitter"
@@ -758,9 +904,7 @@ class CombineTool(Tool):
 
     def _pick_first(self, seg: BeamSegment) -> None:
         self.first = seg
-        path = QPainterPath(to_scene(*seg.start))
-        path.lineTo(to_scene(*seg.end))
-        self.first_line.setPath(path)
+        self.first_line.setPath(line_path(seg.start, seg.end))
         self.first_line.setVisible(True)
         self._show_step()
 
@@ -773,7 +917,7 @@ class CombineTool(Tool):
         ghost = Component.from_dict(self.target.to_dict())
         ghost.x, ghost.y, ghost.angle, ghost.orientation = plan.x, plan.y, plan.angle, plan.orientation
         fork = None
-        if get_unit_type(ghost.type).mounting is Mounting.PEDESTAL:
+        if mounting_of(ghost) is Mounting.PEDESTAL:
             fork = resolve_fork(ghost, self.doc.layout.breadboard, [])
         placed = self.doc.analyzer.cache.place(ghost, fork)
         for item in self.ghost.values():
@@ -781,9 +925,7 @@ class CombineTool(Tool):
             item.set_pose(ghost.x, ghost.y, ghost.angle)
             item.setVisible(item.has_content())
         (px, py), (dx, dy) = plan.point, plan.direction
-        path = QPainterPath(to_scene(px, py))
-        path.lineTo(to_scene(px + self.PREVIEW_LENGTH * dx, py + self.PREVIEW_LENGTH * dy))
-        self.output_line.setPath(path)
+        self.output_line.setPath(line_path((px, py), (px + self.PREVIEW_LENGTH * dx, py + self.PREVIEW_LENGTH * dy)))
         self.output_line.setVisible(True)
 
     def _apply(self, plan: CombinePlan) -> None:
@@ -804,3 +946,397 @@ class CombineTool(Tool):
             doc.add_component(self.target.type, plan.x, plan.y, plan.angle, params=params, orientation=plan.orientation)
         self.view.set_tool("select")
         self.view.notify(plan.summary().replace("\n", " "))  # the status bar has one line
+
+
+# ==========================================================================
+# Aim a beam at a point
+# ==========================================================================
+class AimTool(Tool):
+    """Click a beam, then the point it should pass through: one component
+    turns about its post so it does, exactly.  The point snaps to holes and
+    optic centres, else to the 1/8" grid (Alt: anywhere).
+
+    The component that turns is ``comp_id`` (the selected one) if given: the
+    beam may then be any that comes from it, also after further flat mirrors,
+    splitters and windows, which stay put.  Otherwise it is the component the
+    clicked beam leaves.  With ``comp_id`` and a single beam to choose from,
+    that beam is picked straight away."""
+
+    name = "aim"
+    cursor = Qt.CursorShape.CrossCursor
+    PAST_TARGET = 1.0  # inches of the aimed beam previewed beyond the point
+
+    def __init__(self, view: LayoutView, comp_id: str | None = None):
+        super().__init__(view)
+        self.only = comp_id
+        self.trace = self.doc.analysis.trace
+        self.picked: BeamSegment | None = None
+        self.route: AimRoute | None = None  # how the picked beam comes from the component that turns
+        self.routes: dict[int, AimRoute | AimError] = {}  # per segment index of the current trace
+        self.plans: dict[tuple[float, float], AimPlan | AimError] = {}
+        self.beam_line = dashed_line_item(C.ACCENT)
+        self.preview_line = dashed_line_item(C.PROBE)
+        self.ghost: dict[Layer, ComponentLayerItem] = {}
+        self._listening = False
+        choices = [seg for seg in self.trace.segments if isinstance(self._route(seg), AimRoute)] if comp_id else []
+        self._auto_picked = len(choices) == 1
+        if self._auto_picked:
+            self.picked, self.route = choices[0], self._route(choices[0])
+        self.hint = self._step_hint()
+
+    # ------------------------------------------------------------- helpers
+    def _route(self, seg: BeamSegment) -> AimRoute | AimError:
+        """How ``seg`` comes from the component that would turn, or why it can't be aimed."""
+        if seg.index not in self.routes:
+            comp = self.doc.layout.component(self.only or leaving_component(self.trace, seg))
+            if comp is None or get_unit_type(comp.type).structural:
+                self.routes[seg.index] = AimError("This beam does not come from a part that can turn")
+            else:
+                others = [u for cid, u in self.doc.analysis.units.items() if cid != comp.id]
+                try:
+                    self.routes[seg.index] = aim_route(comp, seg, self.trace, others, self.doc.layout)
+                except AimError as exc:
+                    self.routes[seg.index] = exc
+        return self.routes[seg.index]
+
+    def _turned(self) -> Component | None:
+        return self.doc.layout.component(self.route.component_id) if self.route is not None else None
+
+    def _beam_name(self, seg: BeamSegment, route: AimRoute) -> str:
+        """E.g. "M1's reflected beam", or "the beam after M3, turning M1"."""
+        comp = self.doc.layout.component(route.component_id)
+        name = comp.label or comp.id
+        if route.surfaces:
+            return f"the beam after {route.surfaces[-1].name}, turning {name}"
+        steps = beam_key(self.trace, seg).steps
+        port = f"{steps[-1][1]} beam" if steps and steps[-1][0] == comp.id else "beam"
+        return f"{name}'s {port}"
+
+    @staticmethod
+    def _route_points(route: AimRoute) -> list[tuple[float, float]]:
+        """The beam from where it leaves the turning component to the end of the picked segment."""
+        return [seg.start for seg in route.segments] + [route.segments[-1].end]
+
+    def _step_hint(self) -> str:
+        if self.picked is None:
+            if self.only:
+                name = self.doc.layout.component(self.only).label or "the selected part"
+                return (f"Aim with {name}: click a beam coming from it, directly or after flat mirrors, "
+                        "splitters and windows  (Esc: back)")
+            return "Aim a beam: click the beam where it leaves a component (select a part first to turn that one)"
+        return (f"Aim {self._beam_name(self.picked, self.route)}: click the point it should pass through "
+                "(holes and optic centres snap, else the 1/8\" grid · Alt: anywhere · Esc: back)")
+
+    def _show_step(self) -> None:
+        self.hint = self._step_hint()
+        self.view.show_hint(self.hint)
+
+    # ----------------------------------------------------------- lifecycle
+    def activate(self) -> None:
+        super().activate()
+        for item in (self.beam_line, self.preview_line):
+            if item.scene() is None:
+                self.scene.addItem(item)
+        if not self.ghost:
+            for layer in Layer:
+                item = ComponentLayerItem("__aim_ghost__", layer, ghost=True)
+                item.setVisible(False)
+                self.scene.addItem(item)
+                self.ghost[layer] = item
+        if self.picked is not None:
+            self._pick(self.picked, self.route)
+        if not self._listening:
+            self.doc.analysisUpdated.connect(self._layout_changed)
+            self._listening = True
+
+    def deactivate(self) -> None:
+        super().deactivate()
+        self._stop_listening()
+        for item in (self.beam_line, self.preview_line, *self.ghost.values()):
+            if item.scene() is not None:
+                self.scene.removeItem(item)
+        self.ghost.clear()
+
+    def _stop_listening(self) -> None:
+        if self._listening:
+            self.doc.analysisUpdated.disconnect(self._layout_changed)
+            self._listening = False
+
+    def _layout_changed(self) -> None:
+        """Undo, redo or another edit: follow the picked beam if it is still there."""
+        key = beam_key(self.trace, self.picked) if self.picked is not None else None
+        self.trace = self.doc.analysis.trace
+        self.routes.clear()
+        self.plans.clear()
+        if self.only and self.doc.layout.component(self.only) is None:
+            self.view.set_tool("select")  # the part that would turn is gone
+            return
+        if key is not None:
+            seg = find_beam(self.trace, key)
+            route = self._route(seg) if seg is not None else None
+            if isinstance(route, AimRoute):
+                self._pick(seg, route)
+            else:
+                self._forget()
+                self._show_step()
+
+    # -------------------------------------------------------------- events
+    def move(self, ev, scene_pos, mx, my):
+        label = self.scene.hover_label
+        if self.picked is None:
+            hit = self.trace.nearest((mx, my), SNAP_PX / self.scale)
+            if hit is None:
+                self.scene.snap_indicator.setVisible(False)
+                self.beam_line.setVisible(False)
+                label.setVisible(False)
+                return
+            seg, along = hit[0], hit[1]
+            route = self._route(seg)
+            ok = isinstance(route, AimRoute)
+            self.scene.snap_indicator.show_at(*seg.point_at(along), color=C.ACCENT if ok else C.ERROR)
+            if ok:  # the whole beam that would be aimed, from the part that turns
+                self.beam_line.setPath(line_path(*self._route_points(route)))
+            self.beam_line.setVisible(ok)
+            label.set_text(f"Aim {self._beam_name(seg, route)}" if ok else f"⚠ {route}")
+        else:
+            comp = self._turned()
+            snap = self.view.snapper.target(mx, my, self.scale, disabled=bool(ev.modifiers() & ALT), exclude=comp.id)
+            self.scene.snap_indicator.show_at(snap.x, snap.y, color=TARGET_COLORS.get(snap.kind, C.TEXT))
+            plan = self._plan((snap.x, snap.y))
+            self._show_plan(plan if isinstance(plan, AimPlan) else None)
+            label.set_text(plan.summary(comp.label) if isinstance(plan, AimPlan) else f"⚠ {plan}")
+        label.setPos(scene_pos + QPointF(12.0 / self.scale, -12.0 / self.scale))
+        label.setVisible(True)
+
+    def press(self, ev, scene_pos, mx, my):
+        if ev.button() != Qt.MouseButton.LeftButton:
+            return
+        if self.picked is None:
+            hit = self.trace.nearest((mx, my), SNAP_PX / self.scale)
+            if hit is None:
+                return
+            route = self._route(hit[0])
+            if isinstance(route, AimRoute):
+                self._pick(hit[0], route)
+            else:
+                self.view.notify(f"⚠ {route}")
+            return
+        comp = self._turned()
+        snap = self.view.snapper.target(mx, my, self.scale, disabled=bool(ev.modifiers() & ALT), exclude=comp.id)
+        plan = self._plan((snap.x, snap.y))
+        if isinstance(plan, AimError):
+            self.view.notify(f"⚠ {plan}")
+            return
+        self._stop_listening()
+        self.doc.transform_components({comp.id: (comp.x, comp.y, plan.angle)}, f"Aim with {comp.label or 'a part'}")
+        self.doc.set_selection([comp.id])
+        self.view.set_tool("select")
+        self.view.notify(plan.summary(comp.label))
+
+    def key_press(self, ev):
+        if ev.key() == Qt.Key.Key_Escape:
+            self.cancel()
+            return True
+        return False
+
+    def context_click(self) -> bool:
+        self.cancel()
+        return True
+
+    def cancel(self) -> None:
+        """Esc / right-click: forget the picked beam, or leave the tool."""
+        if self.picked is None or self._auto_picked:
+            self.view.set_tool("select")
+            return
+        self._forget()
+        self._show_step()
+
+    # ------------------------------------------------------------ planning
+    def _pick(self, seg: BeamSegment, route: AimRoute) -> None:
+        self.picked, self.route = seg, route
+        self.plans.clear()
+        self.beam_line.setPath(line_path(*self._route_points(route)))
+        self.beam_line.setVisible(True)
+        self._show_step()
+
+    def _forget(self) -> None:
+        self.picked = self.route = None
+        self.beam_line.setVisible(False)
+        self._show_plan(None)
+        self.scene.hover_label.setVisible(False)
+
+    def _plan(self, target: tuple[float, float]) -> AimPlan | AimError:
+        key = (round(target[0], 6), round(target[1], 6))
+        if key not in self.plans:
+            comp = self._turned()
+            others = [u for cid, u in self.doc.analysis.units.items() if cid != comp.id]
+            try:
+                self.plans[key] = plan_aim(
+                    comp, self.picked, target, self.trace, others, self.doc.layout, self.doc.analyzer.cache
+                )
+            except AimError as exc:
+                self.plans[key] = exc
+            except Exception:  # never let a solver bug take the canvas down
+                log.exception("aiming a beam failed")
+                self.plans[key] = AimError("Could not aim the beam there (see the log)")
+        return self.plans[key]
+
+    def _show_plan(self, plan: AimPlan | None) -> None:
+        """Ghost of the component turned, and the beam it then sends through the point."""
+        if plan is None:
+            for item in (*self.ghost.values(), self.preview_line):
+                item.setVisible(False)
+            return
+        ghost = Component.from_dict(self.doc.layout.component(plan.component_id).to_dict())
+        ghost.angle = plan.angle
+        fork = resolve_fork(ghost, self.doc.layout.breadboard, []) if mounting_of(ghost) is Mounting.PEDESTAL else None
+        placed = self.doc.analyzer.cache.place(ghost, fork)
+        for item in self.ghost.values():
+            item.set_geometry(placed)
+            item.set_pose(ghost.x, ghost.y, ghost.angle)
+            item.setVisible(item.has_content())
+        (dx, dy), (tx, ty) = plan.direction, plan.target
+        self.preview_line.setPath(line_path(*plan.path[:-1], (tx + self.PAST_TARGET * dx, ty + self.PAST_TARGET * dy)))
+        self.preview_line.setVisible(True)
+
+
+# ==========================================================================
+# Turn a clamp
+# ==========================================================================
+class ClampTool(Tool):
+    """Point a clamped post's clamping fork at the hole you choose: the holes
+    its screw can reach are ringed, and the fork follows the cursor from one
+    to the next.  Click to keep it; Esc or a right-click cancels."""
+
+    name = "clamp"
+    cursor = Qt.CursorShape.CrossCursor
+    MARK_R = 0.17  # inches: the rings around reachable holes
+
+    def __init__(self, view: LayoutView, comp_id: str):
+        super().__init__(view)
+        self.comp_id = comp_id
+        comp = self.doc.layout.component(comp_id)
+        name = (comp.label if comp is not None else "") or "this post"
+        self.hint = f"Turn the clamp of {name}: point at one of the ringed holes and click (Esc: cancel)"
+        self.marks = QGraphicsPathItem()
+        self.marks.setPen(cosmetic_pen(C.OK, 1.4, Qt.PenStyle.DashLine))
+        self.marks.setZValue(Z_OVERLAY - 1)
+        self.marks.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+
+    def _comp(self) -> Component | None:
+        comp = self.doc.layout.component(self.comp_id)
+        return comp if comp is not None and is_clamped(comp) else None
+
+    def activate(self) -> None:
+        super().activate()
+        comp = self._comp()
+        if comp is None:
+            return
+        if self.marks.scene() is None:
+            self.scene.addItem(self.marks)
+        path = QPainterPath()
+        for hx, hy in reachable_holes(comp, self.doc.layout.breadboard):
+            path.addEllipse(to_scene(float(hx), float(hy)), self.MARK_R, self.MARK_R)
+        self.marks.setPath(path)
+        if not self.doc.interacting:
+            self.doc.begin_interaction()
+
+    def deactivate(self) -> None:
+        super().deactivate()
+        if self.marks.scene() is not None:
+            self.scene.removeItem(self.marks)
+        if self.doc.interacting:
+            self.doc.cancel_interaction()
+
+    def move(self, ev, scene_pos, mx, my):
+        comp = self._comp()
+        if comp is None:
+            return
+        hole = hole_toward(comp, self.doc.layout.breadboard, math.degrees(math.atan2(my - comp.y, mx - comp.x)))
+        if hole is None:
+            return
+        direction = round(math.degrees(math.atan2(hole[1] - comp.y, hole[0] - comp.x)), 2)
+        self.scene.snap_indicator.show_at(*hole, color=C.OK)
+        set_param(comp.params, CLAMP_ANGLE_FIELD.key, normalize_angle(direction))
+        self.doc.interaction_changed({comp.id})
+
+    def press(self, ev, scene_pos, mx, my):
+        if ev.button() != Qt.MouseButton.LeftButton:
+            return
+        self.move(ev, scene_pos, mx, my)
+        self.doc.end_interaction("Turn clamp")
+        self.view.set_tool("select")
+
+    def key_press(self, ev):
+        if ev.key() == Qt.Key.Key_Escape:
+            self.view.set_tool("select")  # deactivating cancels
+            return True
+        return False
+
+    def context_click(self) -> bool:
+        self.view.set_tool("select")
+        return True
+
+
+# ==========================================================================
+# Drill holes
+# ==========================================================================
+class DrillTool(Tool):
+    """Drill extra tapped holes, only at the centres of the grid cells (where
+    they clear the grid's threads); click a drilled hole to fill it in."""
+
+    name = "drill"
+    cursor = Qt.CursorShape.CrossCursor
+    hint = "Drill: click the centre of a grid cell to drill a 1/4\"-20 hole there, a drilled hole to fill it (Esc: done)"
+
+    def _target(self, mx: float, my: float) -> tuple[float, float, str | None] | None:
+        """The spot under the cursor: (x, y, why it can't be drilled or None), or None."""
+        board = self.doc.layout.breadboard
+        drilled = min(board.drilled, key=lambda h: math.hypot(h[0] - mx, h[1] - my), default=None)
+        if drilled is not None and math.hypot(drilled[0] - mx, drilled[1] - my) <= DRILL_RADIUS:
+            return drilled[0], drilled[1], None
+        centre = board.nearest_cell_centre(mx, my)
+        if centre is None or math.hypot(centre[0] - mx, centre[1] - my) > DRILL_RADIUS * board.pitch:
+            return None
+        return centre[0], centre[1], board.drill_problem(*centre)
+
+    def move(self, ev, scene_pos, mx, my):
+        target = self._target(mx, my)
+        label = self.scene.hover_label
+        if target is None:
+            self.scene.snap_indicator.setVisible(False)
+            label.setVisible(False)
+            return
+        x, y, problem = target
+        filling = self.doc.layout.breadboard.drilled_at(x, y) is not None
+        color = C.MEASURE if filling else (C.ERROR if problem else C.OK)
+        self.scene.snap_indicator.show_at(x, y, color=color)
+        label.set_text("Fill this drilled hole" if filling else (f"⚠ {problem}" if problem else "Drill here"))
+        label.setPos(to_scene(x, y) + QPointF(12.0 / self.scale, -12.0 / self.scale))
+        label.setVisible(True)
+
+    def press(self, ev, scene_pos, mx, my):
+        if ev.button() != Qt.MouseButton.LeftButton:
+            return
+        target = self._target(mx, my)
+        if target is None:
+            self.view.notify("Holes can only be drilled at the centre of a grid cell")
+            return
+        x, y, problem = target
+        if self.doc.layout.breadboard.drilled_at(x, y) is not None:
+            self.doc.fill_hole(x, y)
+        elif problem:
+            self.view.notify(f"⚠ Cannot drill here: {problem}")
+        else:
+            self.doc.drill_hole(x, y)
+        self.move(ev, scene_pos, mx, my)
+
+    def key_press(self, ev):
+        if ev.key() == Qt.Key.Key_Escape:
+            self.view.set_tool("select")
+            return True
+        return False
+
+    def context_click(self) -> bool:
+        self.view.set_tool("select")
+        return True

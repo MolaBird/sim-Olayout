@@ -4,13 +4,12 @@ import math
 
 import pytest
 
-from olayout.catalog.units import new_component_params
 from olayout.core.layout import Component, Layout
 from olayout.engine.analysis import Analyzer
 from olayout.engine.combine import CombineError, beam_crossing, plan_combiner, splitter_normal
 from olayout.optics.tracer import WarningKind
 
-from conftest import make_component
+from conftest import make_component, on_post
 
 
 def _two_beams(t_angle=0.0, r_angle=-90.0, crossing=(10.0, 8.0), back=6.0):
@@ -35,7 +34,7 @@ def _plan(layout, t_source, r_source, splitter: Component):
 
 
 def _new_pellicle() -> Component:
-    return Component("bs", "mag-km-pellicle", label="BS1", params=new_component_params("mag-km-pellicle"))
+    return on_post("pellicle-km100bp", "bs", "BS1", holder="clamped", kb1x1=True)
 
 
 def _combined_outputs(layout, plan):
@@ -72,7 +71,7 @@ def test_new_pellicle_combines_two_beams(t_angle, r_angle):
 def test_orientation_is_chosen_so_the_transmitted_beam_leaves_through_the_open_side():
     """A KM100 holding a plate splitter has L-shaped plates: only one way up lets T through."""
     layout, (t, r) = _two_beams(0.0, -90.0)
-    splitter = Component("bs", "km-mirror", label="BS1", params=new_component_params("km-mirror"))
+    splitter = on_post("km100", "bs", "BS1", holder="clamped")
     splitter.params["optic"]["kind"] = "splitter"
     plan, _, _, _ = _plan(layout, t, r, splitter)
     assert plan.combined and plan.transmitted == pytest.approx(0.5) and plan.reflected == pytest.approx(0.5)
@@ -120,7 +119,7 @@ def test_the_crossing_is_found_past_an_optic_that_does_not_deflect():
 
 def test_hole_mounted_splitter_lands_on_a_hole_and_reports_the_miss():
     layout, (t, r) = _two_beams(0.0, -90.0, crossing=(10.45, 8.56))  # the KM100CP's optic is over its post
-    splitter = Component("bs", "km-h-mirror", label="BS1", params=new_component_params("km-h-mirror"))
+    splitter = on_post("km100cp", "bs", "BS1")
     splitter.params["optic"]["kind"] = "splitter"
     plan, _, _, _ = _plan(layout, t, r, splitter)
     assert (plan.x, plan.y) == (10.5, 8.5)

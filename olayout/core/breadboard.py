@@ -2,13 +2,15 @@
 
 The breadboard's lower-left corner is the layout origin.  Holes sit on a
 square grid with spacing ``pitch``; the first row/column is ``margin`` in
-from the plate edge.
+from the plate edge.  Extra holes can be drilled, but only at the centre of
+a grid cell (midway between four holes), where they clear the grid's own
+threads.
 """
 
 from __future__ import annotations
 
 import math
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 
@@ -47,6 +49,7 @@ PRESETS: dict[str, BreadboardPreset] = {
 }
 
 DEFAULT_PRESET = "Board 21x20"
+COUNTERBORE_CLEARANCE = 0.3  # inches: no drilling this close to a mounting counterbore
 
 
 @dataclass(frozen=True)
@@ -57,6 +60,7 @@ class Breadboard:
     margin: float = 0.5
     hole_diameter: float = 0.25
     name: str = DEFAULT_PRESET
+    drilled: tuple[tuple[float, float], ...] = ()  # extra tapped holes, at cell centres
 
     @classmethod
     def from_preset(cls, name: str) -> Breadboard:
@@ -81,31 +85,45 @@ class Breadboard:
     def _index(self, value: float, count: int) -> int:
         return int(np.clip(round((value - self.margin) / self.pitch), 0, max(count - 1, 0)))
 
-    def nearest_hole(self, x: float, y: float) -> tuple[float, float]:
+    def nearest_grid_hole(self, x: float, y: float) -> tuple[float, float]:
         """The grid hole closest to (x, y), clamped onto the board."""
         col = self._index(x, self.columns)
         row = self._index(y, self.rows)
         return self.margin + col * self.pitch, self.margin + row * self.pitch
 
-    def hole_at(self, x: float, y: float, tol: float = 1e-3) -> tuple[int, int] | None:
-        """(column, row), both 1-based, of the hole at (x, y), or None."""
+    def nearest_hole(self, x: float, y: float) -> tuple[float, float]:
+        """The hole closest to (x, y): a grid hole or a drilled one."""
+        best = self.nearest_grid_hole(x, y)
+        best_d = math.hypot(best[0] - x, best[1] - y)
+        for hole in self.drilled:
+            d = math.hypot(hole[0] - x, hole[1] - y)
+            if d < best_d:
+                best, best_d = hole, d
+        return best
+
+    def hole_at(self, x: float, y: float, tol: float = 1e-3) -> tuple[float, float] | None:
+        """(column, row), both 1-based, of the hole at (x, y), or None.
+
+        A drilled hole lies between four grid holes, so its numbers end in .5."""
         if self.columns == 0 or self.rows == 0:
             return None
         hx, hy = self.nearest_hole(x, y)
         if math.hypot(hx - x, hy - y) > tol:
             return None
-        return self._index(x, self.columns) + 1, self._index(y, self.rows) + 1
+        return _hole_number((hx - self.margin) / self.pitch + 1), _hole_number((hy - self.margin) / self.pitch + 1)
 
     def holes_in_annulus(self, cx: float, cy: float, r_min: float, r_max: float) -> np.ndarray:
-        """Hole centres whose distance from (cx, cy) lies in [r_min, r_max]."""
+        """Hole centres (grid and drilled) whose distance from (cx, cy) lies in [r_min, r_max]."""
         xs = self.hole_xs()
         ys = self.hole_ys()
         xs = xs[(xs >= cx - r_max) & (xs <= cx + r_max)]
         ys = ys[(ys >= cy - r_max) & (ys <= cy + r_max)]
-        if xs.size == 0 or ys.size == 0:
-            return np.zeros((0, 2))
-        gx, gy = np.meshgrid(xs, ys)
-        pts = np.column_stack([gx.ravel(), gy.ravel()])
+        pts = np.zeros((0, 2))
+        if xs.size and ys.size:
+            gx, gy = np.meshgrid(xs, ys)
+            pts = np.column_stack([gx.ravel(), gy.ravel()])
+        if self.drilled:
+            pts = np.vstack([pts, np.asarray(self.drilled, dtype=float)])
         dist = np.hypot(pts[:, 0] - cx, pts[:, 1] - cy)
         return pts[(dist >= r_min) & (dist <= r_max)]
 
@@ -125,9 +143,57 @@ class Breadboard:
             points.append((self.width / 2, self.height / 2))
         return points
 
+    # ------------------------------------------------------- drilled holes
+    def nearest_cell_centre(self, x: float, y: float) -> tuple[float, float] | None:
+        """The centre of the grid cell around (x, y): the only place a hole may be drilled."""
+        if self.columns < 2 or self.rows < 2:
+            return None
+        col = int(np.clip(math.floor((x - self.margin) / self.pitch), 0, self.columns - 2))
+        row = int(np.clip(math.floor((y - self.margin) / self.pitch), 0, self.rows - 2))
+        return self.margin + (col + 0.5) * self.pitch, self.margin + (row + 0.5) * self.pitch
+
+    def drilled_at(self, x: float, y: float, tol: float = 1e-3) -> tuple[float, float] | None:
+        """The drilled hole at (x, y), if there is one."""
+        for hole in self.drilled:
+            if math.hypot(hole[0] - x, hole[1] - y) <= tol:
+                return hole
+        return None
+
+    def drill_problem(self, x: float, y: float) -> str | None:
+        """Why no hole can be drilled at (x, y), or None if it can."""
+        centre = self.nearest_cell_centre(x, y)
+        if centre is None or math.hypot(centre[0] - x, centre[1] - y) > 1e-3:
+            return "holes can only be drilled at the centre of a grid cell"
+        if self.drilled_at(x, y) is not None:
+            return "a hole is drilled here already"
+        if any(math.hypot(cx - x, cy - y) < COUNTERBORE_CLEARANCE for cx, cy in self.mounting_counterbores()):
+            return "a counterbored mounting hole is here"
+        return None
+
+    def with_drilled(self, x: float, y: float) -> Breadboard:
+        """This board with a hole drilled at (x, y); unchanged if it can't be."""
+        if self.drill_problem(x, y) is not None:
+            return self
+        return replace(self, drilled=tuple(sorted({*self.drilled, (round(x, 6), round(y, 6))})))
+
+    def without_drilled(self, x: float, y: float) -> Breadboard:
+        """This board with the drilled hole at (x, y) filled in."""
+        hole = self.drilled_at(x, y)
+        return self if hole is None else replace(self, drilled=tuple(h for h in self.drilled if h != hole))
+
     # -------------------------------------------------------- serialization
     def to_dict(self) -> dict:
-        return asdict(self)
+        data = {
+            "width": self.width,
+            "height": self.height,
+            "pitch": self.pitch,
+            "margin": self.margin,
+            "hole_diameter": self.hole_diameter,
+            "name": self.name,
+        }
+        if self.drilled:
+            data["drilled"] = [[x, y] for x, y in self.drilled]
+        return data
 
     @classmethod
     def from_dict(cls, data: dict) -> Breadboard:
@@ -135,7 +201,7 @@ class Breadboard:
         if "preset" in data and data["preset"] in PRESETS:  # hand-written shorthand
             return cls.from_preset(data["preset"])
         sized = any(key in data for key in ("width", "height", "pitch", "margin"))
-        return cls(
+        board = cls(
             width=float(data.get("width", defaults.width)),
             height=float(data.get("height", defaults.height)),
             pitch=float(data.get("pitch", defaults.pitch)),
@@ -143,3 +209,17 @@ class Breadboard:
             hole_diameter=float(data.get("hole_diameter", defaults.hole_diameter)),
             name=str(data.get("name", "Custom" if sized else defaults.name)),
         )
+        drilled = data.get("drilled", [])
+        for point in drilled if isinstance(drilled, list) else []:
+            try:
+                x, y = (float(v) for v in point)
+            except (TypeError, ValueError):
+                continue
+            board = board.with_drilled(x, y)  # quietly skips anything not at a free cell centre
+        return board
+
+
+def _hole_number(value: float) -> float | int:
+    """A 1-based hole number: whole for grid holes, x.5 for drilled ones."""
+    halves = round(value * 2) / 2
+    return int(halves) if halves == int(halves) else halves

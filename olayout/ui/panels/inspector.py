@@ -27,7 +27,19 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from olayout.catalog.units import DEFAULT_THICKNESS_MM, Mounting, ParamField, get_param, get_unit_type
+from olayout.catalog import parts as P
+from olayout.catalog.units import (
+    BASE_KIND_FIELD,
+    CLAMP_ANGLE_FIELD,
+    DEFAULT_THICKNESS_MM,
+    Mounting,
+    ParamField,
+    component_bom,
+    get_param,
+    get_unit_type,
+    has_mount,
+    mounting_of,
+)
 from olayout.core.breadboard import PRESETS, Breadboard
 from olayout.core.geometry import point_segment_distance
 from olayout.core.layout import Component
@@ -39,6 +51,7 @@ from olayout.ui.document import LayoutDocument
 # A beam this close to an optic's edge (in beam radii, across the beam) gets its margin listed;
 # at 1.3 w it loses 0.5%.
 EDGE_MARGIN_SHOWN = 3.0
+FREE_STEP = 1 / 32  # inches: the x / y arrows' step for a part that is not in a hole
 
 
 def _spin(decimals: int, step: float, lo: float, hi: float, suffix: str = "") -> QDoubleSpinBox:
@@ -76,6 +89,7 @@ def _dim(text: str) -> QLabel:
 
 class InspectorPanel(QScrollArea):
     combineRequested = Signal()  # "Combine two beams…" on a beamsplitter
+    moveMountRequested = Signal()  # "Move to another post…" on a mount
 
     def __init__(self, doc: LayoutDocument, parent=None):
         super().__init__(parent)
@@ -99,6 +113,8 @@ class InspectorPanel(QScrollArea):
         self._checks: QLabel | None = None
         self._ignored: QLabel | None = None
         self._combine: QPushButton | None = None
+        self._post_buttons: QWidget | None = None
+        self._bom: QLabel | None = None
         self._layout_stats: QLabel | None = None
         self._board_widgets: tuple[QComboBox, QDoubleSpinBox, QDoubleSpinBox, QDoubleSpinBox] | None = None
         self._notes_edit: QPlainTextEdit | None = None
@@ -134,6 +150,8 @@ class InspectorPanel(QScrollArea):
         self._checks = None
         self._ignored = None
         self._combine = None
+        self._post_buttons = None
+        self._bom = None
         self._layout_stats = None
         self._board_widgets = None
         self._notes_edit = None
@@ -192,12 +210,10 @@ class InspectorPanel(QScrollArea):
         self._label_edit.editingFinished.connect(self._commit_label)
         form.addRow("Label", self._label_edit)
 
-        hole_mounted = unit.mounting is Mounting.HOLE
-        step = self.doc.layout.breadboard.pitch if hole_mounted else 0.125
         for key, label, suffix, decimals, step_value, lo, hi in (
-            ("x", "X", "in", 3, step, -200.0, 400.0),
-            ("y", "Y", "in", 3, step, -200.0, 400.0),
-            ("angle", "Angle", "°", 2, 1.0, -720.0, 720.0),
+            ("x", "X", "in", 3, FREE_STEP, -200.0, 400.0),  # the step follows the holder (refresh_values)
+            ("y", "Y", "in", 3, FREE_STEP, -200.0, 400.0),
+            ("angle", "Angle", "°", 2, 0.5, -720.0, 720.0),
         ):
             spin = _spin(decimals, step_value, lo, hi, suffix)
             if key == "angle":
@@ -229,6 +245,21 @@ class InspectorPanel(QScrollArea):
         self._combine.setVisible(False)
         self._vbox.addWidget(self._combine)
 
+        # Shown while something stands on the post (see refresh_info).
+        self._post_buttons = QWidget()
+        row = QHBoxLayout(self._post_buttons)
+        row.setContentsMargins(0, 0, 0, 0)
+        take_off = QPushButton("Take off post")
+        take_off.setToolTip("Remove the mount; the post, its holder and KB1X1 stay (T)")
+        take_off.clicked.connect(lambda: self.doc.take_off_post([self._comp_id] if self._comp_id else []))
+        move = QPushButton("Move to post…")
+        move.setToolTip("Carry the mount, with its settings, onto another post or a new one (Shift+T)")
+        move.clicked.connect(self.moveMountRequested.emit)
+        row.addWidget(take_off)
+        row.addWidget(move)
+        self._post_buttons.setVisible(False)
+        self._vbox.addWidget(self._post_buttons)
+
         self._vbox.addWidget(_separator())
         self._info = _dim("")
         self._vbox.addWidget(self._info)
@@ -240,8 +271,8 @@ class InspectorPanel(QScrollArea):
         self._ignored.setWordWrap(True)
         self._ignored.setToolTip("Problems you chose to ignore (Checks panel, or right-click the part)")
         self._vbox.addWidget(self._ignored)
-        if unit.bill_of_materials:
-            self._vbox.addWidget(_dim("Parts: " + ", ".join(unit.bill_of_materials)))
+        self._bom = _dim("")
+        self._vbox.addWidget(self._bom)
         self.refresh_values()
 
     def _add_param_row(self, form: QFormLayout, field: ParamField) -> None:
@@ -289,7 +320,8 @@ class InspectorPanel(QScrollArea):
         self._vbox.addWidget(_dim(", ".join(c.label or c.id for c in comps)))
         self._vbox.addWidget(_separator())
         self._vbox.addWidget(
-            _dim("Drag to move them together.  R / Shift+R rotates each by 90°, Q / E by 15°.  Delete removes them.")
+            _dim("Drag to move them together.  R / Shift+R rotates each by 90°, Q / E by 1° (Shift 0.1°).  "
+                 "Right-click for their post holders, clamps and KB1X1s.  Delete removes them.")
         )
         button = QPushButton("Delete selected")
         button.clicked.connect(lambda: self.doc.delete_components(self.doc.selection))
@@ -335,11 +367,16 @@ class InspectorPanel(QScrollArea):
         self._vbox.addWidget(_separator())
         self._vbox.addWidget(
             _dim(
-                "Mouse: drag to move · drag the blue handle to rotate (Shift free, Ctrl 1°, "
-                "Alt aims a mirror's reflected beam at the cursor) · wheel zooms · "
+                "Start with a post (Posts in the library), then drop a mount on it, or drop a mount anywhere "
+                "to get one on its own post.  Right-click a post to clamp it, change or turn its clamp, or add "
+                "a KB1X1.\n"
+                "Mouse: drag to move (Ctrl: 1/8\" grid) · drag the blue handle to rotate (pulled onto 15°; "
+                "Shift free, Ctrl 1°, Alt sends the part's beam through the cursor) · wheel zooms · "
                 "middle/right drag or Space+drag pans · Alt+wheel rotates.\n"
-                "Keys: R rotate 90° · Q/E ±15° (Shift ±1°) · F mounting orientation · K lift off KB1X1 · "
-                "M measure · P probe · V select · Del delete · Ctrl+D duplicate · Alt disables snapping."
+                "Keys: R rotate 90° · Q/E ±1° (Shift ±0.1°) · F mounting orientation · K lift off KB1X1 · "
+                "T take off post · H drill holes · A aim a beam at a point · M measure · P probe · V select · "
+                "Del delete · "
+                "Ctrl+D duplicate · Alt disables snapping."
             )
         )
 
@@ -349,13 +386,20 @@ class InspectorPanel(QScrollArea):
 
     def _on_components_changed(self, ids) -> None:
         if self._comp_id in ids:
-            self.refresh_values()
+            comp = self._component()
+            if comp is not None and self._showing != f"one:{comp.id}:{comp.type}":
+                self.rebuild()  # it became something else (a mount went on or off its post)
+            else:
+                self.refresh_values()
 
     def refresh_values(self) -> None:
         comp = self._component()
         if comp is None:
             return
+        in_hole = mounting_of(comp) in (Mounting.HOLE, Mounting.SLOTS)  # both move hole to hole
         for key, spin in self._pose_spins.items():
+            if key in ("x", "y"):
+                spin.setSingleStep(self.doc.layout.breadboard.pitch if in_hole else FREE_STEP)
             value = normalize_angle(comp.angle) if key == "angle" else getattr(comp, key)
             if abs(spin.value() - value) > 10 ** (-spin.decimals()) / 2:
                 spin.blockSignals(True)
@@ -405,10 +449,10 @@ class InspectorPanel(QScrollArea):
             except ValueError:
                 return None
             return DEFAULT_THICKNESS_MM.get(kind)
-        if key == "fork.angle":
+        if key == CLAMP_ANGLE_FIELD.key:  # where the clamp points on the table
             placed = self.doc.analysis.units.get(comp.id)
             if placed is not None and placed.fork is not None:
-                return (placed.fork.angle + 180.0) % 360.0 - 180.0
+                return normalize_angle(placed.fork.angle + comp.angle)
         return None
 
     def _refresh_auto_values(self, comp: Component) -> None:
@@ -440,11 +484,13 @@ class InspectorPanel(QScrollArea):
             n_beams = len(analysis.trace.segments)
             issues = len(analysis.active_issues)
             n_ignored = len(layout.ignored)
+            drilled = len(layout.breadboard.drilled)
             text = (
                 f"{len(layout.components)} components · {len(layout.measurements)} measurements · "
                 f"{len(layout.probes)} probes\n{n_beams} beam segments · "
                 + ("no placement problems" if not issues else f"{issues} placement problem(s)")
                 + (f" · {n_ignored} ignored" if n_ignored else "")
+                + (f"\n{drilled} drilled hole(s) (H to drill or fill)" if drilled else "")
             )
             self._layout_stats.setText(text)
         comp = self._component()
@@ -454,19 +500,30 @@ class InspectorPanel(QScrollArea):
         placed = self.doc.analysis.units.get(comp.id)
         if self._combine is not None:
             self._combine.setVisible(placed is not None and splitter_element(placed.build) is not None)
+        if self._post_buttons is not None:
+            self._post_buttons.setVisible(has_mount(comp))
+        if self._bom is not None:
+            bom = component_bom(comp)
+            self._bom.setText("Parts: " + ", ".join(bom) if bom else "")
+            self._bom.setVisible(bool(bom))
         lines: list[str] = []
         board = self.doc.layout.breadboard
         unit = get_unit_type(comp.type)
-        if unit.mounting is Mounting.HOLE:
+        mounting = mounting_of(comp)
+        if mounting is Mounting.HOLE:
             hole = board.hole_at(comp.x, comp.y)
             anchor = unit.hole_anchor
             lines.append(f"{anchor} in hole {hole}" if hole else f"{anchor} is not on a hole")
-        elif unit.mounting is Mounting.PEDESTAL and placed is not None and placed.fork is not None:
+        elif mounting is Mounting.SLOTS and placed is not None and placed.screws is not None:
+            caught = [(slot.name, board.hole_at(*hole)) for slot, hole in zip(unit.slots, placed.screws) if hole]
+            if caught:
+                lines.append("Screwed down through its " + ", ".join(f"{name} slot into hole {hole}" for name, hole in caught))
+        elif mounting is Mounting.PEDESTAL and placed is not None and placed.fork is not None:
             fork = placed.fork
             if fork.hole is not None:
                 hole = board.hole_at(*fork.hole)
                 lines.append(
-                    f"Fork screw in hole {hole}, {fork.screw_distance:.2f}\" out at "
+                    f"{P.clamp_spec(fork.clamp).part_id} screw in hole {hole}, {fork.screw_distance:.2f}\" out at "
                     f"{normalize_angle(fork.angle + comp.angle):.0f}°"
                 )
         if placed is not None:
@@ -539,7 +596,10 @@ class InspectorPanel(QScrollArea):
 
     def _commit_param(self, field: ParamField, value) -> None:
         if self._comp_id:
-            self.doc.set_component_param(self._comp_id, field.key, value)
+            if field.key == BASE_KIND_FIELD.key:  # into a hole: the post moves onto the nearest one
+                self.doc.set_base_kind([self._comp_id], value)
+            else:
+                self.doc.set_component_param(self._comp_id, field.key, value)
             comp = self._component()
             if comp is not None:
                 self._update_visibility(comp)

@@ -21,9 +21,22 @@ from PySide6.QtWidgets import (
 )
 
 from olayout import __version__, paths
-from olayout.catalog.units import UNIT_TYPES, Mounting, get_unit_type, has_kb1x1
+from olayout.catalog import parts as P
+from olayout.catalog.units import (
+    Mounting,
+    clamp_angle,
+    clamp_of,
+    get_unit_type,
+    has_kb1x1,
+    has_mount,
+    is_clamped,
+    mounting_of,
+    stands_on_post,
+    upgrade_component,
+)
 from olayout.core.breadboard import DEFAULT_PRESET, PRESETS, Breadboard
 from olayout.core.layout import FILE_SUFFIX, Component, Layout, LayoutFormatError
+from olayout.engine.aim import leaving_component
 from olayout.engine.combine import splitter_element
 from olayout.ui.canvas.tools import PlaceTool
 from olayout.ui.canvas.view import LayoutView
@@ -39,21 +52,27 @@ log = logging.getLogger(__name__)
 
 FILE_FILTER = f"Optical layouts (*{FILE_SUFFIX} *.json);;All files (*)"
 CLIPBOARD_KEY = "olayout-components"
+NUDGE_STEPS = {"normal": 1 / 32, "fine": 0.005, "coarse": 1.0}  # inches, for parts not screwed into a hole
+CELL_PICK = 0.35  # a right-click this close to a cell centre (in pitches) offers to drill there
 AUTOSAVE_INTERVAL_MS = 15_000
 MAX_RECENT = 8
 
 SHORTCUTS_HELP = """
 <h3>Mouse</h3>
 <table cellspacing=4>
-<tr><td><b>Drag part</b></td><td>move (hole-mounted parts jump hole to hole; pedestal parts snap their optic onto beams)</td></tr>
-<tr><td><b>Drag blue handle</b></td><td>rotate (15° steps · Shift free · Ctrl 1°)</td></tr>
-<tr><td><b>Alt + drag handle</b></td><td>aim a mirror: reflect the incoming beam toward the cursor</td></tr>
+<tr><td><b>Drag part</b></td><td>move (posts in holes jump hole to hole; clamped posts glide, their optic pulled onto
+nearby beams · Ctrl: 1/8" grid)</td></tr>
+<tr><td><b>Drag blue handle</b></td><td>rotate smoothly, pulled onto 15° steps (Shift: no pull · Ctrl: whole degrees)</td></tr>
+<tr><td><b>Alt + drag handle</b></td><td>aim: turn so the beam leaving the part passes exactly through the cursor</td></tr>
 <tr><td><b>Alt + drag</b></td><td>move without snapping</td></tr>
+<tr><td><b>Drop a mount on a post</b></td><td>a mirror, splitter, collimator... dropped on a bare post goes onto it;
+a KB1X1 goes under the post's mount</td></tr>
 <tr><td><b>Wheel</b></td><td>zoom about the cursor · Shift+wheel pan sideways</td></tr>
-<tr><td><b>Alt + wheel</b></td><td>rotate the selection 5° (with Shift 1°)</td></tr>
+<tr><td><b>Alt + wheel</b></td><td>rotate the selection 1° (with Shift 0.1°)</td></tr>
 <tr><td><b>Touchpad</b></td><td>two-finger scroll pans · pinch (or Ctrl+scroll) zooms</td></tr>
 <tr><td><b>Middle / right drag, Space+drag</b></td><td>pan</td></tr>
-<tr><td><b>Right click</b></td><td>context menu (also: ignore a part's placement problems)</td></tr>
+<tr><td><b>Right click</b></td><td>context menu: post holder in a hole or clamped, clamp type and direction, KB1X1,
+take a mount off its post; on the board: drill or fill a hole</td></tr>
 <tr><td><b>Hover a beam</b></td><td>beam radius, waist, curvature, power at that point</td></tr>
 </table>
 <h3>Keys</h3>
@@ -61,12 +80,17 @@ SHORTCUTS_HELP = """
 <tr><td><b>V / M / P</b></td><td>select · measure · probe tool</td></tr>
 <tr><td><b>C</b></td><td>combine two beams: click the beam to transmit, then the beam to reflect onto it; a beamsplitter
 (the selected one, or a new pellicle) goes where they cross, turned and mounted so both leave as one</td></tr>
+<tr><td><b>A</b></td><td>aim a beam: click it, then the point it should pass through (holes and optic centres snap,
+else the 1/8" grid; Alt: anywhere). The selected part turns about its post so it does, even through further flat
+mirrors, splitters and windows on the way; with nothing selected, the part the beam leaves turns</td></tr>
 <tr><td><b>N</b></td><td>place a beam source</td></tr>
 <tr><td><b>R / Shift+R</b></td><td>rotate ±90°</td></tr>
-<tr><td><b>Q / E</b></td><td>rotate ±15° (with Shift ±1°)</td></tr>
+<tr><td><b>Q / E</b></td><td>rotate ±1° (Shift ±0.1°, Ctrl+Shift ±15°)</td></tr>
 <tr><td><b>F</b></td><td>next mounting orientation (which tap sits on the post)</td></tr>
 <tr><td><b>K</b></td><td>lift a mount off its KB1X1 magnetic base, or put it back</td></tr>
-<tr><td><b>Arrows</b></td><td>nudge: 1 hole / 1/8" (Shift 1/32", Ctrl 1")</td></tr>
+<tr><td><b>T / Shift+T</b></td><td>take the mount off its post · carry it to another post</td></tr>
+<tr><td><b>H</b></td><td>drill holes (only at the centres of grid cells); click a drilled hole to fill it</td></tr>
+<tr><td><b>Arrows</b></td><td>nudge: 1 hole, or 1/32" (Shift 0.005", Ctrl 1")</td></tr>
 <tr><td><b>Ctrl+D, Ctrl+C/V/X, Del</b></td><td>duplicate, clipboard, delete</td></tr>
 <tr><td><b>B / G / L / S</b></td><td>beams · ghost optics (see bases) · labels · snapping</td></tr>
 <tr><td><b>Home</b></td><td>fit the breadboard in view</td></tr>
@@ -172,16 +196,30 @@ class MainWindow(QMainWindow):
         self.act_select_all = a("Select &All", self.select_all, QKeySequence.StandardKey.SelectAll)
         self.act_rot90 = a("Rotate +90°", lambda: self.rotate(90), "R", "rotate")
         self.act_rotm90 = a("Rotate −90°", lambda: self.rotate(-90), "Shift+R")
-        self.act_rot15 = a("Rotate +15°", lambda: self.rotate(15), "Q")
-        self.act_rotm15 = a("Rotate −15°", lambda: self.rotate(-15), "E")
-        self.act_rot1 = a("Rotate +1°", lambda: self.rotate(1), "Shift+Q")
-        self.act_rotm1 = a("Rotate −1°", lambda: self.rotate(-1), "Shift+E")
+        self.act_rot15 = a("Rotate +15°", lambda: self.rotate(15), "Ctrl+Shift+Q")
+        self.act_rotm15 = a("Rotate −15°", lambda: self.rotate(-15), "Ctrl+Shift+E")
+        self.act_rot1 = a("Rotate +1°", lambda: self.rotate(1), "Q")
+        self.act_rotm1 = a("Rotate −1°", lambda: self.rotate(-1), "E")
+        self.act_rot01 = a("Rotate +0.1°", lambda: self.rotate(0.1), "Shift+Q")
+        self.act_rotm01 = a("Rotate −0.1°", lambda: self.rotate(-0.1), "Shift+E")
         self.act_orient = a("Next Mounting &Orientation", self.cycle_orientation, "F", "flip")
         self.act_lift = a(
             "Lift Off / Put &Back (KB1X1)",
             lambda: self.doc.toggle_lifted_off(self.doc.selection),
             "K",
             tip="Take a mount off its KB1X1 magnetic base (it stops interacting with beams), or put it back",
+        )
+        self.act_take_off = a(
+            "&Take Mount off Post",
+            lambda: self.doc.take_off_post(self.doc.selection),
+            "T",
+            tip="Remove the mounts from the selected posts; the posts, holders and KB1X1s stay",
+        )
+        self.act_move_mount = a(
+            "Move Mount to Another Post…",
+            self.move_mount,
+            "Shift+T",
+            tip="Carry the selected mount (with its settings) onto another post, or onto a new one",
         )
         for key, dx, dy in (("Left", -1, 0), ("Right", 1, 0), ("Up", 0, 1), ("Down", 0, -1)):
             a(f"Nudge {key}", lambda dx=dx, dy=dy: self.nudge(dx, dy, "normal"), key)
@@ -200,11 +238,24 @@ class MainWindow(QMainWindow):
             tip="Put a beamsplitter where two beams cross so they leave as one beam "
             "(moves the selected splitter, or adds a pellicle)",
         )
-        for act in (self.act_select, self.act_measure, self.act_probe, self.act_combine):
+        self.act_aim = a(
+            "&Aim Beam at a Point…",
+            lambda: self.start_aiming(),  # not the action's "checked" flag
+            "A",
+            "aim",
+            tip="Turn a part about its post so the beam leaving it passes through a point you click",
+        )
+        for act in (self.act_select, self.act_measure, self.act_probe, self.act_combine, self.act_aim):
             act.setCheckable(True)
             self.tool_group.addAction(act)
         self.act_select.setChecked(True)
         self.act_source = a("Place Beam &Source", lambda: self.view.start_placing("laser"), "N", "beam")
+        self.act_drill = a(
+            "&Drill Holes",
+            lambda: self.view.set_tool("drill"),
+            "H",
+            tip="Drill extra 1/4\"-20 holes at the centres of grid cells (click a drilled hole to fill it)",
+        )
 
         self.act_zoom_in = a("Zoom &In", lambda: self.view.zoom_by(1.25, at_cursor=False), [QKeySequence.StandardKey.ZoomIn, QKeySequence("=")])
         self.act_zoom_out = a("Zoom &Out", lambda: self.view.zoom_by(0.8, at_cursor=False), [QKeySequence.StandardKey.ZoomOut, QKeySequence("-")])
@@ -247,7 +298,12 @@ class MainWindow(QMainWindow):
         edit.addSeparator()
         edit.addActions([self.act_cut, self.act_copy, self.act_paste, self.act_duplicate, self.act_delete, self.act_select_all])
         edit.addSeparator()
-        edit.addActions([self.act_rot90, self.act_rotm90, self.act_rot15, self.act_rotm15, self.act_rot1, self.act_rotm1, self.act_orient, self.act_lift])
+        edit.addActions([
+            self.act_rot90, self.act_rotm90, self.act_rot15, self.act_rotm15, self.act_rot1, self.act_rotm1,
+            self.act_rot01, self.act_rotm01, self.act_orient,
+        ])
+        edit.addSeparator()
+        edit.addActions([self.act_lift, self.act_take_off, self.act_move_mount])
 
         view = bar.addMenu("&View")
         view.addActions([self.act_zoom_in, self.act_zoom_out, self.act_fit])
@@ -260,7 +316,10 @@ class MainWindow(QMainWindow):
             view.addAction(dock.toggleViewAction())
 
         tools = bar.addMenu("&Tools")
-        tools.addActions([self.act_select, self.act_measure, self.act_probe, self.act_combine, self.act_source])
+        tools.addActions([
+            self.act_select, self.act_measure, self.act_probe, self.act_combine, self.act_aim, self.act_source,
+        ])
+        tools.addAction(self.act_drill)
         tools.addSeparator()
         tools.addAction(self.act_snap)
         clear = tools.addAction("Clear Measurements && Probes")
@@ -280,7 +339,9 @@ class MainWindow(QMainWindow):
         tb.addSeparator()
         tb.addActions([self.act_undo, self.act_redo])
         tb.addSeparator()
-        tb.addActions([self.act_select, self.act_measure, self.act_probe, self.act_combine, self.act_source])
+        tb.addActions([
+            self.act_select, self.act_measure, self.act_probe, self.act_combine, self.act_aim, self.act_source,
+        ])
         tb.addSeparator()
         tb.addActions([self.act_rot90, self.act_orient, self.act_duplicate, self.act_delete])
         tb.addSeparator()
@@ -313,6 +374,7 @@ class MainWindow(QMainWindow):
         self.library.placeRequested.connect(self._place_from_library)
         self.checks.focusRequested.connect(self.focus_components)
         self.inspector.combineRequested.connect(self._start_combining)
+        self.inspector.moveMountRequested.connect(self.move_mount)
         self.beam_panel.probeFocusRequested.connect(lambda x, y: self.view.center_on_model(x, y))
 
     # ============================================================== status
@@ -336,13 +398,22 @@ class MainWindow(QMainWindow):
         self.issues_button.setStyleSheet("color: #3ecf8e;" if count == 0 else "color: #ff4d5e; font-weight: 600;")
 
     def _on_tool_changed(self, name: str) -> None:
-        names = {"select": "Select", "measure": "Measure", "probe": "Probe", "place": "Place (Shift-click: keep placing)"}
+        names = {
+            "select": "Select",
+            "measure": "Measure",
+            "probe": "Probe",
+            "place": "Place (Shift-click: keep placing)",
+            "drill": "Drill holes",
+            "aim": "Aim a beam",
+            "clamp": "Turn clamp",
+        }
         self.tool_label.setText(self.view.tool.hint or names.get(name, name))
         mapping = {
             "select": self.act_select,
             "measure": self.act_measure,
             "probe": self.act_probe,
             "combine": self.act_combine,
+            "aim": self.act_aim,
         }
         act = mapping.get(name)
         if act is not None:
@@ -376,14 +447,18 @@ class MainWindow(QMainWindow):
         comps = self.doc.selected_components()
         if not comps:
             return
-        pitch = self.doc.layout.breadboard.pitch
-        on_holes = any(get_unit_type(c.type).mounting is Mounting.HOLE for c in comps)
-        if on_holes:
-            step = pitch
-        else:
-            step = {"fine": 1 / 32, "coarse": 1.0}.get(mode, 1 / 8)
-        poses = {c.id: (c.x + dx * step, c.y + dy * step, c.angle) for c in comps}
-        self.doc.transform_components(poses, "Nudge")
+        on_holes = any(mounting_of(c) in (Mounting.HOLE, Mounting.SLOTS) for c in comps)
+        step = self.doc.layout.breadboard.pitch if on_holes else NUDGE_STEPS[mode]
+        poses = {c.id: (round(c.x + dx * step, 6), round(c.y + dy * step, 6), c.angle) for c in comps}
+        self.doc.transform_components(poses, "Nudge", merge_key="nudge:" + ",".join(sorted(poses)))
+
+    def move_mount(self) -> None:
+        mounts = [c for c in self.doc.selected_components() if has_mount(c)]
+        if len(mounts) != 1:
+            self.statusBar().showMessage("Select one mount on a post to move it to another post", 3000)
+            return
+        self.view.start_placing(move_from=mounts[0].id)
+        self.view.setFocus()
 
     def delete_selection(self) -> None:
         if self.doc.selection:
@@ -408,7 +483,7 @@ class MainWindow(QMainWindow):
     def paste(self) -> None:
         try:
             payload = json.loads(QGuiApplication.clipboard().text())
-            comps = [Component.from_dict(d) for d in payload[CLIPBOARD_KEY]]
+            comps = [upgrade_component(Component.from_dict(d)) for d in payload[CLIPBOARD_KEY]]
             for comp in comps:
                 get_unit_type(comp.type)
         except Exception:
@@ -441,31 +516,100 @@ class MainWindow(QMainWindow):
         self.view.start_placing(type_id)
         self.view.setFocus()
 
+    def start_aiming(self, comp_id: str | None = None) -> None:
+        """Aim tool; with one part selected (or given), only the beams leaving it."""
+        if comp_id is None and len(self.doc.selection) == 1:
+            trace = self.doc.analysis.trace
+            if any(leaving_component(trace, s) == self.doc.selection[0] for s in trace.segments):
+                comp_id = self.doc.selection[0]
+        self.view.set_tool("aim", comp_id=comp_id)
+        self.view.setFocus()
+
     def _start_combining(self) -> None:
         self.view.set_tool("combine")
         self.view.setFocus()
 
-    def _context_menu(self, global_pos, comp_id) -> None:
-        self._build_context_menu(comp_id).exec(global_pos)
+    def _context_menu(self, global_pos, comp_id, board_pos=None) -> None:
+        self._build_context_menu(comp_id, board_pos).exec(global_pos)
 
-    def _build_context_menu(self, comp_id) -> QMenu:
+    def _build_context_menu(self, comp_id, board_pos=None) -> QMenu:
         menu = QMenu(self)
         if comp_id is not None:
             menu.addActions([self.act_rot90, self.act_rotm90, self.act_rot15, self.act_rotm15, self.act_orient])
             comp = self.doc.layout.component(comp_id)
-            if comp is not None and comp.type in UNIT_TYPES and has_kb1x1(UNIT_TYPES[comp.type]):
-                menu.addAction(self.act_lift)
+            if comp is not None and stands_on_post(comp.type):
+                menu.addSeparator()
+                self._add_post_actions(menu, comp)
             placed = self.doc.analysis.units.get(comp_id)
             if placed is not None and splitter_element(placed.build) is not None:
                 menu.addAction(self.act_combine)
+            trace = self.doc.analysis.trace
+            if any(leaving_component(trace, s) == comp_id for s in trace.segments):
+                menu.addAction("Aim Its Beam at a Point…", lambda: self.start_aiming(comp_id))
             menu.addSeparator()
             menu.addActions([self.act_duplicate, self.act_copy, self.act_cut, self.act_delete])
             self._add_ignore_actions(menu, comp_id)
         else:
             menu.addActions([self.act_paste, self.act_source, self.act_select_all])
             menu.addSeparator()
-            menu.addActions([self.act_fit, self.act_ghost])
+            if board_pos is not None:
+                self._add_drill_actions(menu, *board_pos)
+            menu.addActions([self.act_drill, self.act_fit, self.act_ghost])
         return menu
+
+    def _add_post_actions(self, menu: QMenu, comp: Component) -> None:
+        """What can be done to the post under the cursor (applied to the whole selection)."""
+        ids = list(self.doc.selection) or [comp.id]
+        holder = menu.addMenu("Post Holder")
+        group = QActionGroup(holder)
+        for kind, text in (("hole", "In a Hole (PH2)"), ("clamped", "Clamped (PH2 + BE1 + fork)")):
+            act = holder.addAction(text, lambda k=kind: self.doc.set_base_kind(ids, k))
+            act.setCheckable(True)
+            act.setChecked(is_clamped(comp) == (kind == "clamped"))
+            group.addAction(act)
+        if is_clamped(comp):
+            clamp = menu.addMenu("Clamp")
+            group = QActionGroup(clamp)
+            for spec in P.CLAMPS.values():
+                act = clamp.addAction(spec.label, lambda c=spec.part_id: self.doc.set_clamp(ids, c))
+                act.setCheckable(True)
+                act.setChecked(clamp_of(comp) == spec.part_id)
+                group.addAction(act)
+            clamp.addSeparator()
+            auto = clamp.addAction("Automatic Direction", lambda: self.doc.set_clamp_angle(ids, None))
+            auto.setCheckable(True)
+            auto.setChecked(clamp_angle(comp) is None)
+            auto.setToolTip("The clamp finds a hole in reach, clear of its neighbours, by itself")
+            clamp.addAction("Turn Clamp…", lambda: self._turn_clamp(comp.id))
+        if has_kb1x1(comp):
+            if has_mount(comp):
+                menu.addAction(self.act_lift)
+            menu.addAction("Remove KB1X1 Base", lambda: self.doc.set_kb1x1(ids, False))
+        else:
+            menu.addAction("Add KB1X1 Base", lambda: self.doc.set_kb1x1(ids, True))
+        if has_mount(comp):
+            menu.addActions([self.act_take_off, self.act_move_mount])
+
+    def _turn_clamp(self, comp_id: str) -> None:
+        self.doc.set_selection([comp_id])
+        self.view.set_tool("clamp", comp_id=comp_id)
+        self.view.setFocus()
+
+    def _add_drill_actions(self, menu: QMenu, x: float, y: float) -> None:
+        """Drill a hole at (or fill the drilled hole near) a right-click on the board."""
+        board = self.doc.layout.breadboard
+        drilled = min(board.drilled, key=lambda h: (h[0] - x) ** 2 + (h[1] - y) ** 2, default=None)
+        if drilled is not None and max(abs(drilled[0] - x), abs(drilled[1] - y)) <= CELL_PICK * board.pitch:
+            menu.addAction("Fill Drilled Hole", lambda: self.doc.fill_hole(*drilled))
+            return
+        centre = board.nearest_cell_centre(x, y)
+        if centre is None or max(abs(centre[0] - x), abs(centre[1] - y)) > CELL_PICK * board.pitch:
+            return
+        problem = board.drill_problem(*centre)
+        act = menu.addAction("Drill Hole Here", lambda: self.doc.drill_hole(*centre))
+        act.setEnabled(problem is None)
+        if problem:
+            act.setText(f"Drill Hole Here ({problem})")
 
     def _add_ignore_actions(self, menu: QMenu, comp_id: str) -> None:
         """Accept (or stop accepting) the problems of the component under the cursor."""

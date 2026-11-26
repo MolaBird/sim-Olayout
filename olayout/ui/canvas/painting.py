@@ -22,12 +22,15 @@ from PySide6.QtGui import (
 )
 
 from olayout.catalog.parts import Layer
+from olayout.catalog import parts as P
 from olayout.catalog.units import (
     Mounting,
     OpticVisual,
     PlacedPart,
+    clamp_of,
     default_fork,
     get_unit_type,
+    mounting_of,
     new_component_params,
     set_param,
 )
@@ -193,7 +196,7 @@ def source_icon_rect() -> QRectF:
 
 
 # ------------------------------------------------------------- thumbnails
-FORK_PART_IDS = frozenset({"CF125C", "SCREW"})  # the pedestal's swivelling clamp
+FORK_PART_IDS = frozenset({*P.CLAMPS, "SCREW"})  # the pedestal's swivelling clamp
 HOLDER_PART_IDS = FORK_PART_IDS | {"PH2", "PH2@BE1", "BE1"}  # what a mount stands on
 THUMB_FORK_OPACITY = 0.4
 
@@ -205,18 +208,19 @@ def thumbnail_framing(parts: list[PlacedPart]) -> list[PlacedPart]:
     return [p for p in parts if p.part_id not in HOLDER_PART_IDS] or parts
 
 
-def unit_thumbnail(type_id: str, size: int = 64, angle: float = 90.0) -> QPixmap:
+def unit_thumbnail(type_id: str, size: int = 64, angle: float = 90.0, params: dict | None = None) -> QPixmap:
     """Render a unit as it appears on the board (optic facing up), for the library.
 
     The post holder or pedestal shows underneath, the pedestal's clamping fork
-    only faintly; either may run off the edge.
+    only faintly; either may run off the edge.  ``params``: e.g. a library
+    preset (a clamped post); defaults otherwise.
     """
     unit = get_unit_type(type_id)
-    params = new_component_params(type_id)
+    params = new_component_params(type_id) if params is None else params
     for key, value in unit.preview_params:  # e.g. a short rail, so it does not shrink to a line
         set_param(params, key, value)
     comp = Component(id="thumb", type=type_id, angle=angle, params=params)
-    fork = default_fork() if unit.mounting is Mounting.PEDESTAL else None
+    fork = default_fork(clamp_of(comp)) if mounting_of(comp) is Mounting.PEDESTAL else None
     placed = BuildCache().place(comp, fork)
     parts = list(placed.parts)
     framed = thumbnail_framing(parts)

@@ -28,16 +28,17 @@ vendor STEP files; the rendered sprites are committed (see
 
 | Requirement | Where |
 |---|---|
-| **Breadboards**<br>Your 21" × 20" board by default, plus the Thorlabs MB series and optical tables: 1/4"-20 holes on 1" centers, first hole 1/2" from the edge, column/row numbers, mounting counterbores. | `core/breadboard.py` |
-| **Thorlabs parts**<br>KM100, KM100CP, KM100BP and KM200BP kinematic pellicle mounts, BP107 and BP207 fixed pellicle mounts, BP108 (Ø1") and BP208 (Ø2") pellicles, KMSR (for the PFSQ10-03-P01 1" square mirror), FMP1, KB1X1, CP35, M1RMSS adapter, LMM40X-P01 reflective objective, SM1ZB, ER cage rods (any length), BE02R reflective beam expander, MAX311D NanoMax stage, MRAK25-P01 knife-edge prism mirror on a KM100B platform, ID25 iris, LB1 beam dump, PH2, BE1, CF125C. Each is modeled in 3D from Thorlabs mechanical drawings and checked against the vendor STEP files (the MRAK25, KM100B, ID25 and LB1 come from catalog dimensions only). Four simple machined parts (a BE02R riser, a knife-edge holder, a beam block and a pinhole target) have shop drawings generated from the same model: see [Custom parts](#custom-machined-parts). | `catalog/parts.py` |
-| **Combined units**<br>`base`, `km-mirror`, eight magnetic pellicle beamsplitters (Ø1" or Ø2" pellicle, in a kinematic or a fixed mount, on a KB1X1, on a pedestal base or in a hole: see below), `km-h-mirror`, `mirror`, `h-mirror`, `kb-mirror` and `kb-h-mirror` (FMP1 on a KB1X1), and `collimator` (SM1ZB on a PH2 + four ER rods of any length + CP35 holding the lens), plus `sq-km-mirror` (PFSQ10-03-P01 in a KMSR on a pedestal base), `lens`, `h-lens`, `objective` and `h-objective` (LMM40X-P01 in an M1RMSS, in a CP35 on a post), the `beam-expander` (BE02R) and its mirrored version, `beam-expander-riser` (BE02R on a machined riser bolted to two holes), the `sample-stage` (MAX311D with a sample on its platform), the `knife-edge` combiner (MRAK25-P01 on a KM100B, pedestal base) and `knife-edge-post` (MRAK25-P01 in a machined holder on a post in a hole), `iris` and `h-iris` (ID25 on a post), `pinhole-target` (one or two pinholes in a plate on a post), `beam-dump` (LB1) and `beam-block`, and a free `laser` beam source. | `catalog/units.py` |
+| **Breadboards**<br>Your 21" × 20" board by default, plus the Thorlabs MB series and optical tables: 1/4"-20 holes on 1" centers, first hole 1/2" from the edge, column/row numbers, mounting counterbores. Extra holes can be drilled, but only at the centre of a grid cell (`H`). | `core/breadboard.py` |
+| **Thorlabs parts**<br>KM100, KM100CP, KM100BP and KM200BP kinematic pellicle mounts, BP107 and BP207 fixed pellicle mounts, BP108 (Ø1") and BP208 (Ø2") pellicles, KMSR (for the PFSQ10-03-P01 1" square mirror), FMP1, KB1X1, CP35, M1RMSS adapter, LMM40X-P01 reflective objective, SM1ZB, ER cage rods (any length), BE02R reflective beam expander, MAX311D NanoMax stage, MC2000B optical chopper head, MRAK25-P01 knife-edge prism mirror on a KM100B platform, ID25 iris, LB1 beam dump, PH2, BE1, CF125C and the short CF038-P5 clamp. Each is modeled in 3D from Thorlabs mechanical drawings and checked against the vendor STEP files (the MRAK25, KM100B, ID25 and LB1 come from catalog dimensions only, and the CF038-P5 outline is an estimate: there is no STEP file for it in `assets/cad`). Four simple machined parts (a BE02R riser, a knife-edge holder, a beam block and a pinhole target) have shop drawings generated from the same model: see [Custom parts](#custom-machined-parts). | `catalog/parts.py` |
+| **Posts and mounts**<br>Everything optical stands on a Ø1/2" post in a PH2 post holder. Each post is screwed into a hole or clamped on a BE1 pedestal (CF125C or CF038-P5 clamp), and can carry a KB1X1 magnetic base. Those are the post's own settings, so any mount goes on either. Mounts: `km100`, `km100cp`, `kmsr` (PFSQ10-03-P01 square mirror), `fmp1`, `lens` (FMP1), four pellicle beamsplitters (`pellicle-km100bp`, `pellicle-bp107`, `pellicle-km200bp`, `pellicle-bp207`), `collimator` (SM1ZB + four ER rods of any length + CP35 holding the lens), `objective` (LMM40X-P01 in an M1RMSS, in a CP35), `knife-edge` (MRAK25-P01 on a KM100B) and `knife-edge-post` (MRAK25-P01 in a machined holder), `iris` (ID25), `pinhole-target`, `beam-dump` (LB1) and `beam-block`. A bare `post` has nothing on it yet. Not on posts: the `chopper` (MC2000B head, screwed straight to the table through its own base slots), the `beam-expander` (BE02R) and its mirrored version, `beam-expander-riser`, the `sample-stage` (MAX311D), T-slot framing and boards, and a free `laser` beam source. | `catalog/units.py` |
 | **Layers**<br>Bases (post holders, pedestals, forks) and optics (mounts at beam height) are drawn and collision-checked separately. A mount may overhang another unit's base. | `catalog/parts.py` `Layer` |
-| **Placement rules**<br>A PH2 screwed into the table snaps hole to hole, and so does the MAX311D stage (its base's counterbores land on the grid). A pedestal base (PH2+BE1+CF125C) can stand anywhere: its fork swivels automatically to a reachable hole (screw travel 1.054–2.294") while avoiding other bases. | `engine/fork.py` |
+| **Placement rules**<br>A post in a hole snaps hole to hole (grid or drilled), and so does the MAX311D stage (its base's counterbores land on the grid). A clamped post can stand anywhere. Its clamp swivels to a reachable hole by itself, avoiding other bases (screw travel 1.054–2.294" for the CF125C, 1.054–1.434" for the CF038). You can also turn it to the hole you want. A part with slots in its own base (the chopper head) is screwed straight to the table: it snaps to where every slot catches a hole ("auto mount"). | `engine/fork.py`, `engine/slots.py` |
 | **Mounting orientations**<br>Choose which tap sits on the post (`F`). The part is rolled about its optic axis, so the top view and post offset change correctly. KM100/KM100BP/KM200BP: bottom or side hole (the side hole mirrors the L-shaped plates). KM100CP: foot or ear tap, with the mirror always over the post. SM1ZB: its only 8-32 hole is in the top edge, so it hangs inverted with the knob up; choose whether the housing faces the fiber or the lens. | `PartSpec.oriented` |
-| **Illegal placement**<br>Overlaps per layer, a post holder off a hole, no hole within the fork's reach, a base hanging over the edge. The offending parts turn red and the overlap region is hatched. They are also listed in the *Checks* panel. Any problem or beam warning can be **ignored** when you know better: it stays listed (dimmed), stops counting and is saved with the layout. | `engine/validation.py` |
+| **Illegal placement**<br>Overlaps per layer, a post holder off a hole, no hole within the clamp's reach, a base hanging over the edge. The offending parts turn red and the overlap region is hatched. They are also listed in the *Checks* panel. Any problem or beam warning can be **ignored** when you know better: it stays listed (dimmed), stops counting and is saved with the layout. | `engine/validation.py` |
 | **Gaussian beams**<br>A source has a wavelength, waist, waist position, M², power and direction. Beams reflect, split (R/T), focus (thin lens, off-axis steering), and are blocked by mount bodies or clipped by apertures (a beam meeting an optic at incidence i lights a strip 1/cos i wider than itself). Tangential and sagittal q are tracked, so curved mirrors used off-axis are astigmatic. Kinematic mounts have L-shaped plates, so a beam transmitted through a splitter leaves through the open side; if it walks into the mount instead, *Checks* says so and suggests the other orientation. | `optics/` |
 | **Enclosure framing**<br>1/2" T-slot (80/20-style) rails and posts, and enclosure boards, drawn end to end on the canvas. Rails at beam height, posts and boards stop beams; rails lying on the table let them pass over. Framing never collides with itself (corners, boards in slots), only with the rest. | `catalog/units.py` |
 | **Beam combining**<br>Press `C` and click two beams. A beamsplitter goes where their paths cross, turned so the reflected beam leaves along the transmitted one. The tool picks the mounting orientation that lets both beams through, and previews the result before you commit. | `engine/combine.py` |
+| **Beam aiming**<br>Press `A`, click a beam, then click a point: one part turns about its post so the beam passes exactly through it. The part is the selected one, and the beam may reach the point through further flat mirrors, splitters and windows, which stay put. With nothing selected, the part is the one the beam leaves. The point snaps to holes and optic centres, else to the 1/8" grid. The angle is solved against the real optics, including a mirror sitting ahead of its post. | `engine/aim.py` |
 | **Beam readout**<br>Hover any beam to see w, w₀, distance to waist, R, power and path length. Pin probes (`P`) to keep these in a table. A beam-radius plot shows the whole path to the selected probe. | `ui/panels/beams.py` |
 | **Measurements**<br>Measure tool (`M`) snaps to holes, post axes, optic centers and beams. Shows length (decimal, fractional, mm), Δx/Δy and angle. Measurements persist in the file. | `ui/canvas/tools.py` |
 | **Fast rendering**<br>Every part is rendered once from above into a shaded sprite (height-field renderer with bevels, ambient occlusion and soft shadows). Sprites from vendor CAD are committed in `assets/sprites/`; the rest are cached on disk. Parts that are uniform along their length (rails, boards, cage rods) are rendered as a 1" piece and stretched, so any length draws instantly. The canvas only blits pixmaps. | `render/` |
@@ -48,20 +49,25 @@ vendor STEP files; the rendered sprites are committed (see
 
 **Mouse**
 - Drag a part from the Library onto the board, or double-click it.
+  - A mount (mirror, splitter, collimator...) dropped on a bare post goes onto that post (a green ring shows which). Dropped anywhere else, it comes on a post of its own.
+  - A *KB1X1 magnetic base* dropped on a post goes under its mount (see [Posts](#posts-clamps-and-kb1x1-bases)).
 - Rails and boards are drawn: press at one end, release at the other.
   - Their ends snap to holes and to other rails' and boards' ends, otherwise to a 1/8" grid at 15° steps (Shift: any angle, Alt: no snapping).
   - A click instead of a drag places the default 12" length.
   - The tool stays on for the next one until `Esc` or a right-click.
 - Drag parts to move them.
-  - Hole-mounted parts jump hole to hole.
-  - Pedestal parts snap their *optic center onto beams*, so a mirror drops right into an existing beam. Near a point where two beams cross, they snap onto the crossing (yellow ring), where a beamsplitter combines them. Otherwise they snap to a 1/8" grid.
-  - Hold **Alt** to move without snapping.
-- **Rotate** by dragging the blue handle: 15° steps, **Shift** for free rotation, **Ctrl** for 1° steps.
-  - **Alt + handle** aims a mirror: it rotates so the incoming beam reflects toward the cursor.
+  - Posts in holes jump hole to hole.
+  - Clamped posts glide smoothly (to a thousandth of an inch). Their *optic center* is pulled onto nearby beams, so a mirror drops right into an existing beam. Near a point where two beams cross, it is pulled onto the crossing (yellow ring), where a beamsplitter combines them.
+  - Hold **Ctrl** to move on a 1/8" grid instead, **Alt** to move without snapping.
+- **Rotate** by dragging the blue handle. It turns smoothly (0.1°) and is pulled onto multiples of 15° near one; the angle is shown at the cursor. **Shift**: no pull, **Ctrl**: whole degrees.
+  - **Alt + handle** aims: the part turns so the beam leaving it passes exactly through the cursor.
 - The wheel zooms about the cursor. Middle/right-drag or Space+drag pans, and so does Shift+wheel (sideways).
-- **Alt+wheel** rotates the selection by 5° (Alt+Shift: 1°).
+- **Alt+wheel** rotates the selection by 1° (Alt+Shift: 0.1°). Turns in a row undo together.
 - On a touchpad, two-finger scrolling pans and pinching (or Ctrl+scroll) zooms.
-- Right-click opens a context menu. On a part with problems it offers to ignore them.
+- Right-click opens a context menu:
+  - on a post: its holder (in a hole or clamped), clamp type and direction, KB1X1, and taking the mount off;
+  - on the board: drilling or filling a hole there;
+  - on a part with problems: ignoring them.
 
 **Keys**
 
@@ -69,12 +75,15 @@ vendor STEP files; the rendered sprites are committed (see
 |---|---|
 | `V` / `M` / `P` | select / measure / probe tool |
 | `C` | combine two beams with a beamsplitter (see below) |
+| `A` | aim a beam at a point (see below) |
 | `N` | place a beam source |
 | `R`, `Shift+R` | rotate ±90° |
-| `Q` / `E` | rotate ±15° (with `Shift`: ±1°) |
+| `Q` / `E` | rotate ±1° (`Shift`: ±0.1°, `Ctrl+Shift`: ±15°) |
 | `F` | next mounting orientation |
 | `K` | lift a mount off its KB1X1 magnetic base, or put it back |
-| arrows | nudge 1 hole (hole-mounted) or 1/8" (`Shift` 1/32", `Ctrl` 1") |
+| `T` / `Shift+T` | take the mount off its post / carry it onto another post |
+| `H` | drill holes at grid-cell centres (click a drilled hole to fill it) |
+| arrows | nudge 1 hole (posts in holes) or 1/32" (`Shift` 0.005", `Ctrl` 1") |
 | `Ctrl+D`, `Ctrl+C/V/X`, `Del` | duplicate, clipboard, delete |
 | `B` / `G` / `L` / `S` | beams · ghost optic layer (see bases underneath) · labels · snapping |
 | `Home` | fit the breadboard |
@@ -87,42 +96,97 @@ parameter list:
 - mounting orientation
 - optic type, focal length, radius of curvature, R, T and thickness
 - source parameters
-- fork direction (Auto or preferred)
+- the post: holder (in a hole or clamped), clamp, clamp direction (Auto or set), thumbscrew side, KB1X1
 
 It also shows:
 - the optic center (for a single optic)
 - where each beam hits it (incidence angle, offset from center, spot size, clipping), and
   how many beam radii it is from the optic's edge when that is under 3 w
-- which hole the fork screw uses
+- which hole the clamp screw uses
+- every part it is built from, post and holder included
 - for the collimator: the fiber-to-lens distances its rods allow
 - the part's placement problems, including ignored ones
 
 With nothing selected, it edits the breadboard and the layout notes.
 
-**Lifting a mount off its KB1X1.** Mounts on a KB1X1 magnetic base (the
-pellicle beamsplitters and the `kb-` mirrors) can be lifted off and put back,
-just like on the table. Press `K`, untick *On its KB1X1* in the Inspector, or
-right-click the part. While a mount is off:
+### Optical chopper
+
+The `chopper` is a Thorlabs MC2000B chopper head with a Ø4" 10/100-slot
+blade, drawn from the vendor STEP file. It needs no post or base: its base
+plate has two arc slots for 1/4"-20 cap screws, 1.5" from its centre and
+spanning ±30°.
+
+- **Auto mount.** While you place or drag it, it snaps to where both slots
+  catch a hole at its current angle. At 0°, that is midway between two holes
+  3" apart, with its slots across them. Turned up to 30° there, it stays on
+  the same two screws, and at other angles it finds other pairs of holes.
+  Drilled holes count too. The screws are drawn in the slots, and the
+  Inspector names their holes. Where no spot works, *Checks* says so. `Alt`
+  places it freely; the arrow keys move it a whole hole.
+- **The blade.** `angle` is the beam direction through the blade. The head
+  stands on the table, so where the beam crosses the blade depends on the
+  beam's height. Set *Beam height* in the Inspector (3.5" by default; the hub
+  is 2.923" up). Each slotted ring passes half the beam (the time average):
+  10 inner slots, 100 outer slots, and 10 near the rim. The hub, the solid
+  rings and the rim stop it, and beside the blade it passes freely. The notes
+  list where the slotted rings are along the blade at your beam height.
+
+### Posts, clamps and KB1X1 bases
+
+Build an assembly the way you would on the table:
+1. **Place a post** (*Posts ▸ Post* in the library). It is a PH2 post holder
+   screwed into a hole. Right-click ▸ *Post Holder ▸ Clamped* stands it on a
+   BE1 pedestal instead, held by a clamping fork (*Clamped post* in the library
+   starts that way). Switching back to a hole moves it onto the nearest one.
+2. Optionally **drop a KB1X1** (*Posts ▸ KB1X1 magnetic base*) on the post,
+   or right-click ▸ *Add KB1X1 Base*.
+3. **Drop a mount on it**: a mirror, a splitter, a collimator, an objective...
+   The mount takes over the post's holder, clamp and KB1X1.
+4. **Take it off** again with `T` (or right-click, or *Take off post* in the
+   Inspector), leaving the post. `Shift+T` carries the mount, with all its
+   settings, onto another bare post, or onto a new one where you click.
+
+**Clamps.** A clamped post keeps the automatic clamp: the fork finds a hole in
+reach, clear of its neighbours. Right-click ▸ *Clamp* switches to the short
+**CF038-P5**, which fits where a CF125C would hit a neighbour but reaches only
+holes 1.05–1.43" away. *Turn Clamp…* rings every hole the clamp can reach.
+Point at one and click, and the fork stays on it. Its direction is set on the
+table, so it does not swing when you turn the mount. *Automatic Direction*
+hands it back to the solver. The Inspector's *Clamp direction* does the same
+by number.
+
+**Drilling holes.** Press `H` (or *Tools ▸ Drill Holes*) and click the centre
+of a grid cell to drill a 1/4"-20 hole there; click a drilled hole to fill it.
+Holes go only at cell centres (where they clear the grid's own threads), never
+on the board's counterbored mounting holes. Right-clicking the board offers
+the same. Drilled holes have a yellow rim. Posts screw into them and clamps
+reach them like any other hole. They are saved with the board and kept when
+it is resized.
+
+**Lifting a mount off its KB1X1.** A mount on a post with a KB1X1 can be
+lifted off and put back, just like on the table. Press `K`, untick *Mount on
+its KB1X1* in the Inspector, or right-click the part. While a mount is off:
 - it stops reflecting, blocking and colliding, so beams go straight through;
 - only the post and the KB1X1's bottom plate stay, and the mount is drawn faintly where it goes back.
 
 Putting it back restores it exactly. The state is saved in the file as
-`"kb1x1": {"seated": false}` and can be undone.
+`"kb1x1": {"present": true, "seated": false}` and can be undone.
 
 **Thumbscrew side.** A PH2 screwed into a hole can be turned so its
 thumbscrew points right, left, back or front of the unit (*Thumbscrew* in the
 Inspector, `"post": {"thumbscrew": "left"}` in the file). Crowded neighbours
 then stop colliding on their thumbscrews.
 
-**Pellicle beamsplitters.** Eight units, all 8:92 (R:T) pellicles on a KB1X1
-magnetic base, each on a pedestal base or (`-h-`) on a PH2 in a hole:
+**Pellicle beamsplitters.** Four mounts, all 8:92 (R:T) pellicles. Like any
+mount they go on a post in a hole or clamped, usually with a KB1X1 so they
+can be lifted out of the beam:
 
 | Unit | Pellicle | Mount |
 |---|---|---|
-| `mag-pellicle`, `mag-h-pellicle` | BP108, Ø1″ | BP107 fixed |
-| `mag-km-pellicle`, `mag-km-h-pellicle` | BP108, Ø1″ | KM100BP kinematic |
-| `mag-pellicle-2in`, `mag-h-pellicle-2in` | BP208, Ø2″ | BP207 fixed |
-| `mag-km-pellicle-2in`, `mag-km-h-pellicle-2in` | BP208, Ø2″ | KM200BP kinematic |
+| `pellicle-bp107` | BP108, Ø1″ | BP107 fixed |
+| `pellicle-km100bp` | BP108, Ø1″ | KM100BP kinematic |
+| `pellicle-bp207` | BP208, Ø2″ | BP207 fixed |
+| `pellicle-km200bp` | BP208, Ø2″ | KM200BP kinematic |
 
 The pellicle's ring drops into the mount: onto a lip in the KM100BP / KM200BP
 front plate, or behind the two clamp tabs of the BP107 / BP207 U-shaped
@@ -158,6 +222,44 @@ beam that should pass straight through, then the beam to reflect onto it.
 - The splitter's unused output port usually ends on its own mount, which
   *Checks* lists. That is expected for a combiner: ignore it there.
 
+**Aiming a beam.** Press `A` (or *Tools ▸ Aim Beam at a Point*, or
+right-click a part ▸ *Aim Its Beam at a Point*).
+1. Click the beam to aim.
+   - With a part selected, that part is the one that turns. The beam may be
+     any that comes from it: the one leaving it, or one further along after
+     flat mirrors, splitters (either port) and windows or irises, which all
+     stay put. Hovering a beam highlights its whole route from the part. If
+     only one beam comes from it, that beam is picked for you.
+   - With nothing selected, the part that turns is the one the clicked beam
+     leaves: a mirror's reflection, a source's or collimator's output, a
+     splitter's reflected port, and so on.
+2. Click the point it should pass through. The point snaps to holes and to
+   other parts' optic centres (aim at the next mirror), else to the 1/8"
+   grid. Hold `Alt` to pick any point.
+3. While you hover, a ghost shows the part turned and a dashed line shows
+   the beam's new route to the point. The status line gives the turn, the
+   optics it goes via and the path length. The click is one undoable step;
+   `Esc` or a right-click backs out.
+
+The part turns about its post axis; its position never changes. The angle
+is solved numerically against the part's own optics, so it is exact even
+though most mirrors sit ahead of their post. A KM100's surface is ~0.57"
+out, so turning it also moves where the beam lands. If a point is out of
+reach, the tool says why: for example, the transmitted beam of a splitter
+only shifts sideways when turned, the mirror would have to turn so far that
+the beam misses its glass, or the beam would walk off a mirror on the way
+("…but the beam would miss M2"). If something stands between the part and
+the point, the tool names it.
+
+Lenses, curved mirrors and beam expanders between the turning part and the
+point are refused, because they focus the beam. Flat optics only reflect it,
+and that keeps the solve fast however many there are. The flat optics after
+the part map its outgoing beam onto the final one by a fixed chain of
+reflections. So the point is reflected back through them, last first, and
+the part only has to aim its own beam at that mirror image. A route through
+eight mirrors solves in about 3 ms. The real path is then checked: it must
+land on each mirror's glass and front face, and one full trace confirms it.
+
 ## Coordinates and conventions
 
 - The board origin is its lower-left corner. x goes right, y goes away from you. Units are inches.
@@ -184,15 +286,19 @@ beam that should pass straight through, then the beam to reflect onto it.
 ```json
 {
   "format": "olayout",
-  "version": 1,
+  "version": 2,
   "units": "inch",
-  "breadboard": {"width": 21.0, "height": 20.0, "pitch": 1.0, "margin": 0.5, "hole_diameter": 0.25, "name": "Board 21x20"},
+  "breadboard": {"width": 21.0, "height": 20.0, "pitch": 1.0, "margin": 0.5, "hole_diameter": 0.25,
+                 "name": "Board 21x20", "drilled": [[5.0, 5.0]]},
   "components": [
     {"id": "c1", "type": "collimator", "x": 1.5, "y": 2.5, "angle": 0.0, "label": "FC1",
      "params": {"source": {"enabled": true, "wavelength_nm": 780.0, "mfd_um": 5.0, "power_mw": 1.0},
-                "lens": {"focal_length_mm": 25.4, "distance_mm": 25.4}}},
-    {"id": "c2", "type": "km-mirror", "x": 7.904, "y": 2.096, "angle": 135.0, "label": "M1",
-     "params": {"optic": {"kind": "mirror", "roc_mm": 0.0}, "fork": {"angle": null}}}
+                "lens": {"focal_length_mm": 25.4, "distance_mm": 25.4},
+                "base": {"kind": "hole"}}},
+    {"id": "c2", "type": "km100", "x": 7.904, "y": 2.096, "angle": 135.0, "label": "M1",
+     "params": {"optic": {"kind": "mirror", "roc_mm": 0.0},
+                "base": {"kind": "clamped", "clamp": "CF125C"}, "clamp": {"angle": null},
+                "kb1x1": {"present": true, "seated": true}}}
   ],
   "measurements": [{"id": "m1", "a": [7.5, 2.5], "b": [7.5, 8.5]}],
   "probes": [{"id": "p1", "x": 4.2, "y": 2.5, "label": "P1"}],
@@ -204,6 +310,16 @@ beam that should pass straight through, then the beam to reflect onto it.
 - placement problems are `overlap` (with `layer` `base` or `optic`),
   `off-hole`, `no-hole`, `off-board` and `invalid`;
 - beam warnings are `clipped`, `own-mount` and `segment-limit`.
+
+A post-mounted component carries its post's settings in `base` (holder
+`hole` or `clamped`, and the `clamp`), `clamp.angle` (the clamp's direction
+on the table, `null` for automatic), `post.thumbscrew` and `kb1x1`.
+
+Files from version 1, where the holder was part of the type (`km-mirror`,
+`km-h-mirror`, `kb-mirror`, `mag-km-pellicle`, `base`, ...), are upgraded when
+they are opened: each becomes its mount on the holder and KB1X1 it had, and an
+old fork preference becomes the same direction on the table. Beams, clamps and
+problems come out exactly as before. Saving writes version 2.
 
 Hand edits are welcome:
 - Missing fields fall back to defaults.
@@ -221,6 +337,7 @@ overlays of the top-view outlines. A few values are still marked `estimate`
 in `catalog/parts.py`:
 - where the fiber tip sits in the SM1ZB carriage
 - the KB1X1 plate split
+- the CF038-P5 clamp's outline (the CF125C's profile, cut down to its 0.38" slot)
 
 The KMSR, M1RMSS, LMM40X-P01 and the pellicle parts (BP107, BP207, BP108,
 BP208, KM200BP) were measured directly on their STEP files.

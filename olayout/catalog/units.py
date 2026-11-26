@@ -11,6 +11,7 @@ optic's front face points (for sources: the beam direction).
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import math
 from dataclasses import dataclass, replace
@@ -34,15 +35,26 @@ from olayout.catalog.primitives import (
     transform_all,
 )
 from olayout.core.geometry import Pose, as_polygonal, transform_geometry
-from olayout.core.layout import Component
-from olayout.core.units import MM, NM, UM
+from olayout.core.layout import Component, register_component_upgrade
+from olayout.core.units import MM, NM, UM, normalize_angle
 from olayout.optics.elements import Blocker, Emitter, OpticalElement, OpticKind
 
 
 class Mounting(str, Enum):
-    HOLE = "hole"  # post holder screwed straight into a hole: snaps to the hole grid
-    PEDESTAL = "pedestal"  # PH2 + BE1 + CF125C: anywhere; the fork screw needs a hole in reach
+    """How a component is fastened to the table.
+
+    A unit that stands on a post is ``POST``: each component then has its own
+    post holder, screwed into a hole (it behaves as ``HOLE``) or clamped on a
+    pedestal (``PEDESTAL``); see :func:`mounting_of`.  A unit whose own base
+    has slots (``SLOTS``) is screwed straight to the table through them, so it
+    snaps to where its slots catch holes (see :class:`ArcSlot`).
+    """
+
+    HOLE = "hole"  # screwed straight into a hole: snaps to the holes
+    PEDESTAL = "pedestal"  # PH2 + BE1 + clamping fork: anywhere; the fork screw needs a hole in reach
     FREE = "free"  # virtual objects (e.g. a beam source): no mechanical constraints
+    POST = "post"  # on a post, in a holder that is in a hole or clamped (each component says which)
+    SLOTS = "slots"  # screwed to the table through slots in its own base: snaps to where they catch holes
 
 
 # ==========================================================================
@@ -149,12 +161,32 @@ class OpticVisual:
 
 
 @dataclass(frozen=True)
+class ArcSlot:
+    """A slot in a unit's own base for a 1/4"-20 screw into the table: an arc
+    about the unit origin (so the unit can turn about it while screwed down)."""
+
+    radius: float  # of the slot's centre line, inches
+    middle: float  # direction of the arc's middle, degrees, unit frame
+    half_span: float  # degrees the screw can sit either side of the middle
+    width: float  # inches
+    name: str = ""
+
+    def catches(self, local: tuple[float, float], play: float) -> bool:
+        """Whether a screw into a hole at ``local`` (unit frame) passes through
+        this slot, ``play`` inches off its centre line at most."""
+        r = math.hypot(*local)
+        angle = math.degrees(math.atan2(local[1], local[0]))
+        return abs(r - self.radius) <= play and abs((angle - self.middle + 180.0) % 360.0 - 180.0) <= self.half_span + 1e-9
+
+
+@dataclass(frozen=True)
 class ForkPlacement:
-    """Resolved clamping-fork placement for a pedestal base."""
+    """Resolved clamping-fork placement for a clamped post."""
 
     angle: float  # slot direction, degrees, unit frame
     screw_distance: float  # pedestal centre to screw axis
     hole: tuple[float, float] | None = None  # world hole used (None: no hole in reach)
+    clamp: str = P.DEFAULT_CLAMP  # which fork (see parts.CLAMPS)
 
 
 @dataclass(frozen=True)
@@ -192,9 +224,9 @@ class UnitBuild:
 
 @dataclass(frozen=True)
 class UnitType:
-    """A placeable unit.  Its build never includes a pedestal's clamping fork:
+    """A placeable unit.  Its build never includes a clamped post's fork:
     the fork swivels independently (see :func:`fork_parts`), so moving a
-    pedestal unit never forces a rebuild."""
+    clamped post never forces a rebuild."""
 
     id: str
     name: str
@@ -214,6 +246,7 @@ class UnitType:
     structural: bool = False
     hole_anchor: str = "Post holder"  # what sits on the hole, for a hole-mounted unit
     preview_params: tuple[tuple[str, Any], ...] = ()  # (key, value) overrides for the library thumbnail
+    slots: tuple[ArcSlot, ...] = ()  # a ``SLOTS`` unit: the slots in its base
 
     def orientations(self) -> list[tuple[str, str]]:
         if not self.orientation_part:
@@ -426,8 +459,8 @@ def _mount_on_post(part_id: str, tap_name: str | None) -> tuple[PlacedPart, Pose
 
 
 THUMBSCREW_ANGLE = 180.0  # by default the PH2 thumbscrew points to the unit's -y side
-# A post holder screwed into a hole can be turned so its thumbscrew faces any
-# side; looking along the component's angle, "right" is the unit's -y side.
+# A post holder (in a hole or on a pedestal) can be turned so its thumbscrew
+# faces any side; looking along the component's angle, "right" is the unit's -y side.
 THUMBSCREW_SIDES = (("right", "Right"), ("left", "Left"), ("back", "Back"), ("front", "Front"))
 _THUMBSCREW_TURN = {"right": THUMBSCREW_ANGLE, "left": 0.0, "back": 90.0, "front": -90.0}
 THUMBSCREW_FIELD = ParamField(
@@ -446,36 +479,56 @@ def _thumbscrew(comp: Component | None) -> str:
 
 
 def _post_holder_parts(on_pedestal: bool, thumbscrew: str = "right") -> list[PlacedPart]:
-    turn = THUMBSCREW_ANGLE if on_pedestal else _THUMBSCREW_TURN[thumbscrew]
+    turn = _THUMBSCREW_TURN.get(thumbscrew, THUMBSCREW_ANGLE)
     return [_placed("PH2@BE1" if on_pedestal else "PH2", Pose(0, 0, turn))]
 
 
-def default_fork() -> ForkPlacement:
-    lo, hi = P.cf125c_screw_range()
-    return ForkPlacement(angle=180.0, screw_distance=(lo + hi) / 2)
+def _base_parts(clamped: bool, thumbscrew: str = "right") -> list[PlacedPart]:
+    """The post holder, on a BE1 pedestal when clamped.  The pedestal's clamping
+    fork is not part of the build: it is placed per position (:func:`fork_parts`)."""
+    return [*([_placed("BE1")] if clamped else []), *_post_holder_parts(clamped, thumbscrew)]
 
 
-def _pedestal_parts() -> list[PlacedPart]:
-    """BE1 + PH2; the clamping fork is added per placement by :func:`fork_parts`."""
-    return [_placed("BE1"), *_post_holder_parts(on_pedestal=True)]
+def default_fork(clamp: str = P.DEFAULT_CLAMP) -> ForkPlacement:
+    spec = P.clamp_spec(clamp)
+    lo, hi = spec.screw_travel
+    return ForkPlacement(angle=180.0, screw_distance=(lo + hi) / 2, clamp=spec.part_id)
 
 
 def fork_parts(fork: ForkPlacement) -> tuple[PlacedPart, ...]:
-    """CF125C fork and its cap screw for a resolved fork placement (unit frame)."""
+    """The clamping fork and its cap screw for a resolved fork placement (unit frame)."""
     rad = math.radians(fork.angle)
     screw = Pose(fork.screw_distance * math.cos(rad), fork.screw_distance * math.sin(rad), 0.0)
-    return (_placed("CF125C", Pose(0, 0, fork.angle)), _placed("SCREW", screw))
+    return (_placed(P.clamp_spec(fork.clamp).part_id, Pose(0, 0, fork.angle)), _placed("SCREW", screw))
 
 
-_FORK_SHAPE = None
+_CLAMP_SHAPES: dict[str, object] = {}
+
+
+def clamp_footprint(clamp: str):
+    """A clamping fork's footprint in its own frame: the slot along +x, the
+    pedestal centre at the origin (the screw head lies within the fork)."""
+    part_id = P.clamp_spec(clamp).part_id
+    if part_id not in _CLAMP_SHAPES:
+        _CLAMP_SHAPES[part_id] = get_part(part_id).footprint()
+    return _CLAMP_SHAPES[part_id]
 
 
 def fork_footprint(fork: ForkPlacement):
-    """Fork footprint in the unit frame (the screw head lies within the fork)."""
-    global _FORK_SHAPE
-    if _FORK_SHAPE is None:
-        _FORK_SHAPE = get_part("CF125C").footprint()
-    return transform_geometry(_FORK_SHAPE, Pose(0.0, 0.0, fork.angle))
+    """Fork footprint in the unit frame."""
+    return transform_geometry(clamp_footprint(fork.clamp), Pose(0.0, 0.0, fork.angle))
+
+
+def slot_screw_parts(pose: Pose, holes) -> tuple[PlacedPart, ...]:
+    """Cap screws in the world holes a slotted base is screwed down to (unit frame)."""
+    rad = math.radians(-pose.angle)
+    c, s = math.cos(rad), math.sin(rad)
+    screws = []
+    for hole in holes:
+        if hole is not None:
+            dx, dy = hole[0] - pose.x, hole[1] - pose.y
+            screws.append(_placed("SCREW", Pose(c * dx - s * dy, s * dx + c * dy, 0.0)))
+    return tuple(screws)
 
 
 def _beam_blockers(placed: list[PlacedPart]) -> list[Blocker]:
@@ -491,65 +544,164 @@ def _beam_blockers(placed: list[PlacedPart]) -> list[Blocker]:
 # ==========================================================================
 # Builders
 # ==========================================================================
-# A mount on a KB1X1 magnetic base can be lifted off (with the base's top
-# plate) and put back repeatably; while it is off it does nothing optically.
+# Posts.  Every post-mounted unit stands on a Ø1/2" post in a PH2 post
+# holder.  The holder is either screwed into a hole, or stands on a BE1
+# pedestal held down by a clamping fork (which finds a hole in reach by
+# itself).  A KB1X1 magnetic base can sit between the post and the mount, so
+# the mount can be lifted off and put back repeatably.  These choices belong
+# to the component, not its type: they are its post parameters, and the mount
+# on top can be swapped (or taken off, leaving a bare post) without touching
+# them.
+BARE_POST = "post"  # the unit type of a post with nothing on it
+DEFAULT_TAP_Z = -1.0  # top of a bare post: a KB1X1 on it sits there
+BASE_KINDS = (("hole", "In a hole"), ("clamped", "Clamped (BE1 + fork)"))
+BASE_KIND_FIELD = ParamField(
+    "base.kind", "Post holder", "choice", "hole", choices=BASE_KINDS,
+    tooltip="A PH2 screwed straight into a hole, or a PH2 on a BE1 pedestal that a clamping fork holds down "
+    "anywhere (right-click to switch)",
+)
+CLAMP_FIELD = ParamField(
+    "base.clamp", "Clamp", "choice", P.DEFAULT_CLAMP,
+    choices=tuple((c.part_id, c.label) for c in P.CLAMPS.values()),
+    visible_when=("base.kind", ("clamped",)),
+    tooltip="The short CF038 fits where a CF125C would hit a neighbour, but reaches fewer holes",
+)
+CLAMP_ANGLE_FIELD = ParamField(
+    "clamp.angle", "Clamp direction", "float", None, unit="°", minimum=-360, maximum=360, step=5, decimals=1,
+    visible_when=("base.kind", ("clamped",)),
+    tooltip="Where the clamp points on the table (0° = +x).  Auto picks a reachable hole clear of the "
+    "neighbours; a set direction takes the reachable hole nearest to it (right-click: Rotate Clamp).",
+)
+KB1X1_PRESENT = ParamField(
+    "kb1x1.present", "KB1X1 base", "bool", False,
+    tooltip="A KB1X1 magnetic base between the post and the mount: the mount can be lifted off and put back (K)",
+)
 KB1X1_SEATED = ParamField(
-    "kb1x1.seated",
-    "On its KB1X1",
-    "bool",
-    True,
+    "kb1x1.seated", "Mount on its KB1X1", "bool", True,
+    visible_when=("kb1x1.present", (True,)),
     tooltip="Untick (or press K) to lift the mount off its KB1X1 magnetic base: it stops "
     "reflecting, blocking and colliding until you put it back.",
 )
+POST_FIELDS = (BASE_KIND_FIELD, CLAMP_FIELD, CLAMP_ANGLE_FIELD, THUMBSCREW_FIELD, KB1X1_PRESENT, KB1X1_SEATED)
+POST_KEYS = ("base", "clamp", "post", "kb1x1")  # parameter groups that belong to the post, not the mount
+LIFTED_NOTE = "Lifted off its KB1X1: no optics or collisions until it is put back (K)"
 
 
-def has_kb1x1(unit: UnitType) -> bool:
-    return any(f.key == KB1X1_SEATED.key for f in unit.fields)
+def stands_on_post(type_id: str) -> bool:
+    unit = UNIT_TYPES.get(type_id)
+    return unit is not None and unit.mounting is Mounting.POST
+
+
+def is_clamped(comp: Component) -> bool:
+    return get_param(comp.params, BASE_KIND_FIELD.key, "hole") == "clamped"
+
+
+def clamp_of(comp: Component) -> str:
+    return P.clamp_spec(get_param(comp.params, CLAMP_FIELD.key, P.DEFAULT_CLAMP)).part_id
+
+
+def clamp_angle(comp: Component) -> float | None:
+    """The clamp direction the user set (degrees on the table), or None: automatic."""
+    value = get_param(comp.params, CLAMP_ANGLE_FIELD.key, None)
+    try:
+        value = None if value is None else float(value)
+    except (TypeError, ValueError):
+        return None
+    return value if value is None or math.isfinite(value) else None
+
+
+def mounting_of(comp: Component) -> Mounting:
+    """How this component is fastened: a post-mounted one as its own holder
+    says (``HOLE`` or ``PEDESTAL``), any other as its type does."""
+    unit = UNIT_TYPES.get(comp.type)
+    if unit is None:
+        return Mounting.FREE
+    if unit.mounting is Mounting.POST:
+        return Mounting.PEDESTAL if is_clamped(comp) else Mounting.HOLE
+    return unit.mounting
+
+
+def has_kb1x1(comp: Component) -> bool:
+    return stands_on_post(comp.type) and bool(get_param(comp.params, KB1X1_PRESENT.key, False))
+
+
+def has_mount(comp: Component) -> bool:
+    """Whether something stands on this component's post."""
+    return stands_on_post(comp.type) and comp.type != BARE_POST
 
 
 def lifted_off(comp: Component) -> bool:
-    """Whether a KB1X1-mounted unit's mount is currently off its base."""
-    return not bool(get_param(comp.params, KB1X1_SEATED.key, True))
+    """Whether the mount is off its KB1X1 (only a post with a KB1X1 can be)."""
+    return has_kb1x1(comp) and not bool(get_param(comp.params, KB1X1_SEATED.key, True))
 
 
-def build_post_mounted_optic(
-    unit: UnitType, comp: Component, *, mount_id: str, adapter_id: str | None, default_kind: OpticKind
-) -> UnitBuild:
-    pedestal = unit.mounting is Mounting.PEDESTAL
-    parts: list[PlacedPart] = _pedestal_parts() if pedestal else _post_holder_parts(False, _thumbscrew(comp))
+@dataclass(frozen=True)
+class Top:
+    """What a post-mounted unit puts on its post, in its unit frame (post axis
+    at the origin, beam plane at z = 0)."""
+
+    parts: tuple[PlacedPart, ...] = ()  # the mount and what it holds; it comes off with a KB1X1's top plate
+    tap_z: float = DEFAULT_TAP_Z  # height of the face that sits on the post: a KB1X1 goes right under it
+    elements: tuple[OpticalElement, ...] = ()
+    emitters: tuple[Emitter, ...] = ()
+    blockers: tuple[Blocker, ...] = ()  # besides the parts' own cross-sections (substrates, blades, glass)
+    see_through: frozenset[str] = frozenset()  # parts whose cross-section is drawn by the optics instead
+    optic_visuals: tuple[OpticVisual, ...] = ()
+    notes: tuple[str, ...] = ()
+
+
+def build_on_post(unit: UnitType, comp: Component, *, top: Callable[[UnitType, Component], Top]) -> UnitBuild:
+    """A post-mounted unit: its holder (in a hole or clamped), the KB1X1 if
+    any, and the mount on top."""
+    mount = top(unit, comp)
+    base = _base_parts(is_clamped(comp), _thumbscrew(comp))
+    if has_kb1x1(comp):
+        if lifted_off(comp):
+            base.append(_placed("KB1X1-BOTTOM", Pose(), z_offset=mount.tap_z))
+            return UnitBuild(
+                parts=tuple(base),
+                blockers=tuple(_beam_blockers(base)),
+                notes=(LIFTED_NOTE,) if mount.parts else (),
+                detached_parts=mount.parts,
+            )
+        base.append(_placed("KB1X1", Pose(), z_offset=mount.tap_z))
+    solid = [p for p in mount.parts if p.part_id not in mount.see_through]
+    return UnitBuild(
+        parts=(*base, *mount.parts),
+        elements=mount.elements,
+        emitters=mount.emitters,
+        blockers=(*_beam_blockers(base), *_beam_blockers(solid), *mount.blockers),
+        optic_visuals=mount.optic_visuals,
+        notes=mount.notes,
+    )
+
+
+def _tap_z(part_id: str, tap: str | None = None) -> float:
+    return get_part(part_id).oriented(tap).tap_z
+
+
+def bare_post_top(unit: UnitType, comp: Component) -> Top:
+    return Top(notes=("Nothing on it: drop a mount from the library onto it",))
+
+
+def mount_top(unit: UnitType, comp: Component, *, mount_id: str, default_kind: OpticKind) -> Top:
+    """A mount holding one optic, its chosen tap on the post."""
     mount, mount_pose = _mount_on_post(mount_id, comp.orientation or None)
-    carried = [mount]  # what sits on the adapter (and comes off with a KB1X1's top plate)
+    parts = [mount]
     if mount_id in PELLICLE_MOUNTS and _optic_kind(comp.params, default_kind) is not OpticKind.NONE:
         # The pellicle's own ring sits in the mount, its membrane on the optic slot's plane.
         membrane = Pose(get_part(mount_id).optic_slot.seat_x, 0.0, 0.0)
-        carried.append(_placed(PELLICLE_MOUNTS[mount_id].part_id, mount_pose.compose(membrane)))
-    if adapter_id:
-        # Adapter (e.g. KB1X1) sits on the post directly under the mount's tap.
-        mount_tap_z = get_part(mount_id).oriented(comp.orientation or None).tap_z
-        if adapter_id == "KB1X1" and lifted_off(comp):
-            parts.append(_placed("KB1X1-BOTTOM", Pose(), z_offset=mount_tap_z))
-            return UnitBuild(
-                parts=tuple(parts),
-                blockers=tuple(_beam_blockers(parts)),
-                notes=("Lifted off its KB1X1: no optics or collisions until it is put back (K)",),
-                detached_parts=tuple(carried),
-            )
-        parts.append(_placed(adapter_id, Pose(), z_offset=mount_tap_z))
-    parts += carried
+        parts.append(_placed(PELLICLE_MOUNTS[mount_id].part_id, mount_pose.compose(membrane)))
     elements, substrate, visuals = _optic_elements(
         get_part(mount_id), mount_pose, comp.params, default_kind, comp.label
     )
-    blockers = _beam_blockers(parts) + substrate
-    return UnitBuild(
+    return Top(
         parts=tuple(parts),
+        tap_z=_tap_z(mount_id, comp.orientation or None),
         elements=tuple(elements),
-        blockers=tuple(blockers),
+        blockers=tuple(substrate),
         optic_visuals=tuple(visuals),
     )
-
-
-def build_base(unit: UnitType, comp: Component) -> UnitBuild:
-    return UnitBuild(parts=tuple(_pedestal_parts()))
 
 
 def build_beam_expander(unit: UnitType, comp: Component, *, mirrored: bool) -> UnitBuild:
@@ -661,7 +813,7 @@ def collimator_lens_range(orientation: str | None, rod_length: float = DEFAULT_R
     return COLLIMATOR_MIN_DISTANCE, max(far, COLLIMATOR_MIN_DISTANCE)
 
 
-def build_collimator(unit: UnitType, comp: Component) -> UnitBuild:
+def collimator_top(unit: UnitType, comp: Component) -> Top:
     params = comp.params
     sm1zb_part = get_part("SM1ZB")
     tap = sm1zb_part.tap(comp.orientation or None)
@@ -671,9 +823,8 @@ def build_collimator(unit: UnitType, comp: Component) -> UnitBuild:
     wanted = _num(params, "lens.distance_mm", 25.4, 0.0, 2000.0) * MM
     distance = min(max(wanted, d_min), d_max)
 
-    parts: list[PlacedPart] = _post_holder_parts(on_pedestal=False)
     sm1zb, frame = _mount_on_post("SM1ZB", tap.name)  # the post sits right under the optic axis
-    parts.append(sm1zb)
+    parts: list[PlacedPart] = [sm1zb]
     tip_x = -P.SM1ZB_FIBER_X if tap.yaw == 180 else P.SM1ZB_FIBER_X
     # The fiber connector always sticks out of the plate face on the fiber side.
     parts.append(_placed("FIBER", frame.compose(Pose(-P.SM1ZB_PLATE_HALF_T, 0.0, 0.0))))
@@ -719,13 +870,12 @@ def build_collimator(unit: UnitType, comp: Component) -> UnitBuild:
         notes.append(f"Lens recessed {(cp35_x - lens_x) / MM:.1f} mm behind the CP35's centre (lens tube)")
     if abs(wanted - distance) > 1e-6:
         notes.append(f"Requested {wanted / MM:.1f} mm is out of reach; clamped")
-    notes = tuple(notes)
-    return UnitBuild(
+    return Top(
         parts=tuple(parts),
+        tap_z=_tap_z("SM1ZB", tap.name),
         elements=tuple(elements),
         emitters=emitters,
-        blockers=tuple(_beam_blockers(parts)),
-        notes=notes,
+        notes=tuple(notes),
     )
 
 
@@ -801,17 +951,17 @@ OBJECTIVE_FIELDS = (
 )
 
 
-def build_objective(unit: UnitType, comp: Component) -> UnitBuild:
+def objective_top(unit: UnitType, comp: Component) -> Top:
     """CP35 on the post (its mid-plane over the post axis), the M1RMSS ring
     threaded in flush with its front face, and the LMM40X screwed in until its
     shoulder seats on the ring, pointing along +x toward the sample."""
     params = comp.params
-    pedestal = unit.mounting is Mounting.PEDESTAL
-    parts: list[PlacedPart] = _pedestal_parts() if pedestal else _post_holder_parts(False)
     plate_front = P.CP35_THICKNESS / 2
-    parts.append(_placed("CP35", Pose(plate_front, 0.0, 0.0), roll=CP35_SPRITE_ROLL))
-    parts.append(_placed("M1RMSS", Pose(plate_front, 0.0, 0.0)))
-    parts.append(_placed("LMM40X", Pose(plate_front, 0.0, 0.0)))
+    parts = (
+        _placed("CP35", Pose(plate_front, 0.0, 0.0), roll=CP35_SPRITE_ROLL),
+        _placed("M1RMSS", Pose(plate_front, 0.0, 0.0)),
+        _placed("LMM40X", Pose(plate_front, 0.0, 0.0)),
+    )
     nose = plate_front + P.LMM40X_NOSE
 
     efl = _num(params, "objective.focal_length_mm", P.LMM40X_EFL_MM, 0.5, 1000.0) * MM
@@ -832,36 +982,33 @@ def build_objective(unit: UnitType, comp: Component) -> UnitBuild:
         f"A collimated beam focuses {wd / MM:.2f} mm in front of the nose; NA ≈ {pupil / (2 * efl):.2f}",
         "Reflective: its two mirrors are not traced and the central obscuration is ignored",
     )
-    return UnitBuild(
-        parts=tuple(parts),
-        elements=(element,),
-        blockers=tuple(_beam_blockers(parts)),
-        notes=notes,
-    )
+    return Top(parts=parts, tap_z=_tap_z("CP35"), elements=(element,), notes=notes)
 
 
-# Knife-edge combiner = MRAK25-P01 prism mirror on a KM100B platform, on a
-# pedestal base, its knife edge over the post.  Each silvered leg is a flat
-# mirror reaching right up to the edge, so two beams arriving square to the
-# output from opposite sides leave side by side, as close as their own sizes
-# allow.  A beam's centre should stay 1.5 w from the edge (1.3 w loses 0.5%).
-def build_knife_edge(unit: UnitType, comp: Component) -> UnitBuild:
-    parts = [*_pedestal_parts(), _placed("KM100B"), _placed("MRAK25")]
+# Knife-edge combiner = MRAK25-P01 prism mirror on a KM100B platform on a
+# post, its knife edge over the post.  Each silvered leg is a flat mirror
+# reaching right up to the edge, so two beams arriving square to the output
+# from opposite sides leave side by side, as close as their own sizes allow.
+# A beam's centre should stay 1.5 w from the edge (1.3 w loses 0.5%).
+def _mrak25_glass(lead: float) -> Blocker:
+    """The glass behind the silvered legs, kept just behind them so the legs themselves reflect."""
+    return Blocker(translate(Polygon(P.mrak25_outline()).buffer(-0.003, join_style="mitre"), lead, 0.0))
+
+
+def knife_edge_top(unit: UnitType, comp: Component) -> Top:
     elements, visuals = _knife_edge_legs(comp.label, 0.0)
-    # The glass behind the silvered legs, kept just behind them so the legs themselves reflect.
-    glass = Polygon(P.mrak25_outline()).buffer(-0.003, join_style="mitre")
-    holder = [p for p in parts if p.part_id != "MRAK25"]
-    notes = (
-        "Beams arriving square to the angle from either side leave along it, side by side",
-        "Keep each beam's centre 1.5 w from the edge (at 1.3 w it loses 0.5%)",
-        "MRAK25 and KM100B are drawn from catalog dimensions (no vendor CAD)",
-    )
-    return UnitBuild(
-        parts=tuple(parts),
+    return Top(
+        parts=(_placed("KM100B"), _placed("MRAK25")),
+        tap_z=_tap_z("KM100B"),
         elements=tuple(elements),
-        blockers=(*_beam_blockers(holder), Blocker(glass)),
+        blockers=(_mrak25_glass(0.0),),
+        see_through=frozenset({"MRAK25"}),
         optic_visuals=tuple(visuals),
-        notes=notes,
+        notes=(
+            "Beams arriving square to the angle from either side leave along it, side by side",
+            "Keep each beam's centre 1.5 w from the edge (at 1.3 w it loses 0.5%)",
+            "MRAK25 and KM100B are drawn from catalog dimensions (no vendor CAD)",
+        ),
     )
 
 
@@ -885,36 +1032,33 @@ def _knife_edge_legs(label: str, lead: float) -> tuple[list[OpticalElement], lis
     return elements, visuals
 
 
-def build_knife_edge_post(unit: UnitType, comp: Component) -> UnitBuild:
-    """MRAK25 in the custom holder on a post in a hole.  Frame: origin on the
-    post axis; the edge points +x, KNIFE_EDGE_LEAD ahead of the post, so beams
-    fed along the post's own column leave 2 x KNIFE_EDGE_LEAD (9.0 mm) apart."""
+def knife_edge_holder_top(unit: UnitType, comp: Component) -> Top:
+    """MRAK25 in the custom holder.  The edge points +x, KNIFE_EDGE_LEAD ahead of
+    the post, so beams fed along the post's own column leave 2 x KNIFE_EDGE_LEAD
+    (9.0 mm) apart."""
     lead = P.KNIFE_EDGE_LEAD
-    parts = [*_post_holder_parts(False, _thumbscrew(comp)), _placed("KEH"), _placed("MRAK25", Pose(lead, 0.0, 0.0))]
     elements, visuals = _knife_edge_legs(comp.label, lead)
-    glass = translate(Polygon(P.mrak25_outline()).buffer(-0.003, join_style="mitre"), lead, 0.0)
-    holder = [p for p in parts if p.part_id != "MRAK25"]
-    notes = (
-        "Feed both beams along the post's column, one from each side: they leave 9.0 mm apart",
-        f"The edge is {P.KNIFE_EDGE_LEAD / MM:.1f} mm ahead of the post; each beam {P.KNIFE_EDGE_LEAD / MM:.1f} mm from it",
-        "Custom holder: drawing in docs/custom-parts.md (MRAK25 drawn from catalog dimensions)",
-    )
-    return UnitBuild(
-        parts=tuple(parts),
+    return Top(
+        parts=(_placed("KEH"), _placed("MRAK25", Pose(lead, 0.0, 0.0))),
+        tap_z=_tap_z("KEH"),
         elements=tuple(elements),
-        blockers=(*_beam_blockers(holder), Blocker(glass)),
+        blockers=(_mrak25_glass(lead),),
+        see_through=frozenset({"MRAK25"}),
         optic_visuals=tuple(visuals),
-        notes=notes,
+        notes=(
+            "Feed both beams along the post's column, one from each side: they leave 9.0 mm apart",
+            f"The edge is {P.KNIFE_EDGE_LEAD / MM:.1f} mm ahead of the post; each beam {P.KNIFE_EDGE_LEAD / MM:.1f} mm from it",
+            "Custom holder: drawing in docs/custom-parts.md (MRAK25 drawn from catalog dimensions)",
+        ),
     )
 
 
-def build_beam_dump(unit: UnitType, comp: Component, *, part_id: str = "LB1") -> UnitBuild:
-    """A beam dump or block on a post in a hole; it faces the unit's angle."""
-    parts = [*_post_holder_parts(False, _thumbscrew(comp)), _placed(part_id)]
+def beam_dump_top(unit: UnitType, comp: Component, *, part_id: str = "LB1") -> Top:
+    """A beam dump or block on the post; it faces the unit's angle."""
     note = ('Absorbs whatever enters its 1.4" x 0.7" aperture; face it toward the beam' if part_id == "LB1"
             else "Bead-blasted, black-anodized block: face it toward the stray beam (or turn it to clear a "
             "neighbour); it scatters what it does not absorb")
-    return UnitBuild(parts=tuple(parts), blockers=tuple(_beam_blockers(parts)), notes=(note,))
+    return Top(parts=(_placed(part_id),), tap_z=_tap_z(part_id), notes=(note,))
 
 
 TARGET_FIELDS = (
@@ -929,10 +1073,9 @@ TARGET_FIELDS = (
 )
 
 
-def build_target(unit: UnitType, comp: Component) -> UnitBuild:
-    """Pinhole target on a post in a hole: the pinholes pass the beams that are
-    on them, the plate stops everything else.  Angle = the beams' direction."""
-    parts = [*_post_holder_parts(False, _thumbscrew(comp)), _placed("TARGET")]
+def target_top(unit: UnitType, comp: Component) -> Top:
+    """Pinhole target: the pinholes pass the beams that are on them, the plate
+    stops everything else.  Angle = the beams' direction."""
     spacing = _num(comp.params, "target.spacing_mm", 0.0, 0.0, 30.0) * MM
     half = _num(comp.params, "target.hole_mm", 1.0, 0.3, 6.0) * MM / 2
     centres = (0.0,) if spacing <= 0 else (spacing / 2, -spacing / 2)
@@ -944,13 +1087,18 @@ def build_target(unit: UnitType, comp: Component) -> UnitBuild:
     (_, y0, _), (_, y1, _) = P.TARGET_PLATE
     edges = sorted([y0, y1, *(c - half for c in centres), *(c + half for c in centres)])
     plate = [Blocker(box(-0.01, lo, 0.01, hi)) for lo, hi in zip(edges[0::2], edges[1::2]) if hi - lo > 1e-6]
-    note = "Each beam should pass its pinhole: a centred beam shows a round, symmetric spot behind it"
-    return UnitBuild(parts=tuple(parts), elements=tuple(elements), blockers=tuple(plate), notes=(note,))
+    return Top(
+        parts=(_placed("TARGET"),),
+        tap_z=_tap_z("TARGET"),
+        elements=tuple(elements),
+        blockers=tuple(plate),
+        see_through=frozenset({"TARGET"}),
+        notes=("Each beam should pass its pinhole: a centred beam shows a round, symmetric spot behind it",),
+    )
 
 
-# Iris = ID25 on a post, in a post holder (on a pedestal base or in a hole).
-# The opening passes beams (clipping the ones it is too small for); the
-# blades and the housing stop everything else.
+# Iris = ID25 on a post.  The opening passes beams (clipping the ones it is
+# too small for); the blades and the housing stop everything else.
 IRIS_FIELDS = (
     ParamField(
         "iris.aperture_mm",
@@ -967,19 +1115,18 @@ IRIS_FIELDS = (
 )
 
 
-def build_iris(unit: UnitType, comp: Component) -> UnitBuild:
-    pedestal = unit.mounting is Mounting.PEDESTAL
-    parts = [*(_pedestal_parts() if pedestal else _post_holder_parts(False, _thumbscrew(comp))), _placed("ID25")]
+def iris_top(unit: UnitType, comp: Component) -> Top:
     aperture = _num(comp.params, "iris.aperture_mm", 3.0, *P.ID25_APERTURE_MM) * MM
     half, bore = aperture / 2, P.ID25_OPENING
     element = OpticalElement(
         kind=OpticKind.WINDOW, center=(0.0, 0.0), normal_angle=0.0, half_aperture=half, name=f"{comp.label} iris".strip()
     )
     blades = [Blocker(box(-0.01, lo, 0.01, hi)) for lo, hi in ((half, bore), (-bore, -half)) if hi - lo > 1e-6]
-    return UnitBuild(
-        parts=tuple(parts),
+    return Top(
+        parts=(_placed("ID25"),),
+        tap_z=_tap_z("ID25"),
         elements=(element,),
-        blockers=(*_beam_blockers(parts), *blades),
+        blockers=tuple(blades),
         notes=(f"Open to Ø{aperture / MM:.1f} mm; the blades stop beams outside it",),
     )
 
@@ -1040,6 +1187,70 @@ STAGE_FACES = (
 )
 STAGE_YAW = {"x": 180.0, "y": 90.0}  # turns the chosen face toward +x (the unit's angle)
 SAMPLE_KINDS = (OpticKind.BLOCK, OpticKind.MIRROR, OpticKind.SPLITTER, OpticKind.WINDOW, OpticKind.NONE)
+
+
+# Optical chopper = MC2000B head, standing on the table with no post: its base
+# plate is screwed down through its own two arc slots.  The blade is a vertical
+# disc across the beam; where the beam crosses it depends on how high the beam
+# is above the table, which a post would otherwise absorb.  Each slotted ring
+# passes the beam half the time (shown as 50% transmission, the time average);
+# the hub, the rings between slot rows and the rim stop it; outside the blade
+# it passes freely.
+CHOPPER_SLOTS = tuple(
+    ArcSlot(P.MC2000B_SLOT_RADIUS, middle, P.MC2000B_SLOT_HALF_SPAN, P.MC2000B_SLOT_WIDTH, name)
+    for middle, name in ((90.0, "left"), (-90.0, "right"))
+)
+CHOPPER_FIELDS = (
+    ParamField(
+        "chopper.beam_height_in", "Beam height", "float", 3.5, unit="in", minimum=1.0, maximum=6.0, step=0.125,
+        decimals=3,
+        tooltip="Beam height above the table. The head stands on the table, so this sets where the beam crosses "
+        f"the blade (its hub is {P.MC2000B_HUB[2]:.3f}\" up).",
+    ),
+)
+
+
+def build_chopper(unit: UnitType, comp: Component) -> UnitBuild:
+    height = _num(comp.params, "chopper.beam_height_in", 3.5, 1.0, 6.0)
+    head = _placed("MC2000B", z_offset=-height)
+    blade_x, _, hub_z = P.MC2000B_HUB
+    above = height - hub_z  # the beam's height above the hub
+    body = transform_all(P.mc2000b_body_prims(), np.eye(3), (0.0, 0.0, -height))
+    blockers = [Blocker(section)] if not (section := slice_at(body, 0.0)).is_empty else []
+    elements: list[OpticalElement] = []
+    crossings = []
+    for r0_mm, r1_mm, open_fraction, ring in P.MC2000B_BLADE_RINGS_MM:
+        r0, r1 = r0_mm * MM, r1_mm * MM
+        if r1 <= abs(above):
+            continue  # the beam passes above (or below) this ring
+        u0, u1 = math.sqrt(max(r0**2 - above**2, 0.0)), math.sqrt(r1**2 - above**2)
+        bands = [(-u1, u1)] if r0 <= abs(above) else [(u0, u1), (-u1, -u0)]  # along the blade, either side of the hub
+        crossings.append((u0, u1, open_fraction, ring))
+        for lo, hi in bands:
+            if open_fraction > 0:
+                side = "" if len(bands) == 1 else (" left" if lo > 0 else " right")
+                elements.append(OpticalElement(
+                    kind=OpticKind.WINDOW, center=(blade_x, (lo + hi) / 2), normal_angle=0.0, half_aperture=(hi - lo) / 2,
+                    transmittance=open_fraction, name=f"{comp.label} {ring}{side}".strip(),
+                ))
+            else:
+                blockers.append(Blocker(box(blade_x - 0.005, lo, blade_x + 0.005, hi)))
+    elements.sort(key=lambda e: (abs(e.center[1]), -e.center[1]))  # the slots nearest the hub first
+    slotted = [f"{ring} {u0:.2f}–{u1:.2f}\"" for u0, u1, fraction, ring in crossings if fraction > 0]
+    notes = (
+        f"The beam {height:.3f}\" up crosses the blade {abs(above):.3f}\" {'above' if above >= 0 else 'below'} the hub; "
+        "it is chopped (50%) where it passes " + (", ".join(slotted) if slotted else "no slots") + " from the hub, "
+        "either side",
+        f"Screw it down through both base slots: centred midway between two holes {2 * P.MC2000B_SLOT_RADIUS:g}\" "
+        f"apart, turned up to {P.MC2000B_SLOT_HALF_SPAN:g}° either way",
+    )
+    return UnitBuild(
+        parts=(head,),
+        elements=tuple(elements),
+        blockers=tuple(blockers),
+        keepouts=((Layer.BASE, head.footprint()),),
+        notes=notes,
+    )
 
 
 def build_sample_stage(unit: UnitType, comp: Component) -> UnitBuild:
@@ -1106,18 +1317,31 @@ def build_laser(unit: UnitType, comp: Component) -> UnitBuild:
 # ==========================================================================
 # Registry
 # ==========================================================================
-FORK_ANGLE = ParamField(
-    "fork.angle",
-    "Fork direction",
-    "float",
-    None,
-    unit="°",
-    minimum=-360,
-    maximum=360,
-    step=15,
-    decimals=1,
-    tooltip="Preferred clamping-fork direction (unit frame); empty = automatic",
-)
+def _post_unit(
+    uid: str,
+    name: str,
+    *,
+    category: str,
+    description: str,
+    prefix: str,
+    bom: tuple[str, ...],
+    top: Callable[[UnitType, Component], Top],
+    fields: tuple[ParamField, ...] = (),
+    orientation_part: str | None = None,
+) -> UnitType:
+    """A unit that stands on a post; the post's own parameters come after its fields."""
+    return UnitType(
+        id=uid,
+        name=name,
+        category=category,
+        description=description,
+        mounting=Mounting.POST,
+        label_prefix=prefix,
+        bill_of_materials=bom,
+        builder=partial(build_on_post, top=top),
+        orientation_part=orientation_part,
+        fields=(*fields, *POST_FIELDS),
+    )
 
 
 def _mount_unit(
@@ -1126,50 +1350,32 @@ def _mount_unit(
     *,
     category: str,
     description: str,
-    mounting: Mounting,
     prefix: str,
     mount_id: str,
     bom: tuple[str, ...],
     default_kind: OpticKind,
-    adapter_id: str | None = None,
     kinds: tuple[OpticKind, ...] | None = None,
-    optic_defaults: dict | None = None,
     optic_param_fields: tuple[ParamField, ...] | None = None,
 ) -> UnitType:
-    def builder(unit: UnitType, comp: Component) -> UnitBuild:
-        return build_post_mounted_optic(unit, comp, mount_id=mount_id, adapter_id=adapter_id, default_kind=default_kind)
-
     if optic_param_fields is not None:
-        fields = list(optic_param_fields)
+        fields = tuple(optic_param_fields)
     else:
-        fields = list(optic_fields(default_kind, kinds, with_thickness=mount_id not in PELLICLE_MOUNTS))
-    if adapter_id == "KB1X1":
-        fields.insert(0, KB1X1_SEATED)
-    if optic_defaults:
-        fields = [
-            ParamField(**{**f.__dict__, "default": optic_defaults[f.key]}) if f.key in optic_defaults else f
-            for f in fields
-        ]
-    if mounting is Mounting.PEDESTAL:
-        fields.append(FORK_ANGLE)
-    elif mounting is Mounting.HOLE:
-        fields.append(THUMBSCREW_FIELD)
-    return UnitType(
-        id=uid,
-        name=name,
+        fields = optic_fields(default_kind, kinds, with_thickness=mount_id not in PELLICLE_MOUNTS)
+    return _post_unit(
+        uid,
+        name,
         category=category,
         description=description,
-        mounting=mounting,
-        label_prefix=prefix,
-        bill_of_materials=bom,
-        builder=builder,
+        prefix=prefix,
+        bom=bom,
+        top=partial(mount_top, mount_id=mount_id, default_kind=default_kind),
+        fields=fields,
         orientation_part=mount_id,
-        fields=tuple(fields),
     )
 
 
-BASE_BOM = ("PH2", "BE1", "CF125C", 'TR-series Ø1/2" post')
-HOLE_BOM = ("PH2", 'TR-series Ø1/2" post')
+ON_A_POST = "on a post: in a hole, or clamped on a pedestal (right-click to switch)"
+HOLDER_BOM = ("PH2", 'TR-series Ø1/2" post')
 
 
 def _pellicle_fields(part_id: str) -> tuple[ParamField, ...]:
@@ -1190,41 +1396,34 @@ def _pellicle_fields(part_id: str) -> tuple[ParamField, ...]:
     )
 
 
-# The magnetic pellicle beamsplitters: each mount on a KB1X1, on a pedestal base or in a hole.
+# The pellicle beamsplitters: (unit id, mount, size label, kinematic).
 _PELLICLE_UNITS = (
-    # (id stem, mount, size label, kinematic)
-    ("mag-km-pellicle", "KM100BP", 'Ø1"', True),
-    ("mag-pellicle", "BP107", 'Ø1"', False),
-    ("mag-km-pellicle-2in", "KM200BP", 'Ø2"', True),
-    ("mag-pellicle-2in", "BP207", 'Ø2"', False),
+    ("pellicle-km100bp", "KM100BP", 'Ø1"', True),
+    ("pellicle-bp107", "BP107", 'Ø1"', False),
+    ("pellicle-km200bp", "KM200BP", 'Ø2"', True),
+    ("pellicle-bp207", "BP207", 'Ø2"', False),
 )
 
 
 def _pellicle_units() -> list[UnitType]:
     units = []
-    for stem, mount_id, size, kinematic in _PELLICLE_UNITS:
+    for uid, mount_id, size, kinematic in _PELLICLE_UNITS:
         ring = PELLICLE_MOUNTS[mount_id].part_id
         holder = f"a {mount_id} kinematic mount" if kinematic else f"a {mount_id} fixed mount"
-        for hole in (False, True):
-            uid = stem.replace("pellicle", "h-pellicle") if hole else stem
-            name = f"{'Kinematic' if kinematic else 'Fixed'} pellicle beamsplitter, {size} ({ring})"
-            where = "on a PH2 screwed into a hole" if hole else "on a pedestal base (PH2 + BE1 + CF125C)"
-            units.append(
-                _mount_unit(
-                    uid,
-                    name + (", hole-mounted" if hole else ""),
-                    category="Beamsplitters",
-                    description=f"{ring} 8:92 pellicle in {holder}, on a KB1X1 magnetic base {where}. "
-                    "Lift it off and put it back with K.",
-                    mounting=Mounting.HOLE if hole else Mounting.PEDESTAL,
-                    prefix="BS",
-                    mount_id=mount_id,
-                    adapter_id="KB1X1",
-                    bom=(mount_id, ring, "KB1X1", *(HOLE_BOM if hole else BASE_BOM)),
-                    default_kind=OpticKind.SPLITTER,
-                    optic_param_fields=_pellicle_fields(ring),
-                )
+        units.append(
+            _mount_unit(
+                uid,
+                f"{'Kinematic' if kinematic else 'Fixed'} pellicle beamsplitter, {size} ({ring})",
+                category="Beamsplitters",
+                description=f"{ring} 8:92 pellicle in {holder}, {ON_A_POST}. Put a KB1X1 on the post first to lift "
+                "it off and put it back with K.",
+                prefix="BS",
+                mount_id=mount_id,
+                bom=(mount_id, ring),
+                default_kind=OpticKind.SPLITTER,
+                optic_param_fields=_pellicle_fields(ring),
             )
+        )
     return units
 
 
@@ -1268,231 +1467,152 @@ SAMPLE_STAGE_FIELDS = _sample_fields()
 
 def _build_registry() -> dict[str, UnitType]:
     units = [
+        _post_unit(
+            BARE_POST,
+            "Post",
+            category="Posts",
+            description='Ø1/2" post in a PH2 post holder, nothing on it yet. Drop a mount (or a KB1X1) from the '
+            "library onto it. Right-click to clamp it on a pedestal instead of screwing it into a hole.",
+            prefix="PH",
+            bom=(),
+            top=bare_post_top,
+        ),
         _mount_unit(
-            "km-mirror",
-            "Kinematic mirror",
+            "km100",
+            "Kinematic mirror (KM100)",
             category="Mirrors",
-            description="KM100 kinematic mount on a pedestal base (PH2 + BE1 + CF125C).",
-            mounting=Mounting.PEDESTAL,
+            description=f"KM100 kinematic mount for Ø1\" optics, {ON_A_POST}.",
             prefix="M",
             mount_id="KM100",
-            bom=("KM100", *BASE_BOM),
+            bom=("KM100",),
             default_kind=OpticKind.MIRROR,
         ),
         _mount_unit(
-            "km-h-mirror",
-            "Kinematic mirror, hole-mounted",
+            "km100cp",
+            "Kinematic mirror, post-centred (KM100CP)",
             category="Mirrors",
-            description="KM100CP post-centred kinematic mount on a PH2 screwed into a hole.",
-            mounting=Mounting.HOLE,
+            description=f"KM100CP kinematic mount whose taps sit right under the mirror surface, {ON_A_POST}.",
             prefix="M",
             mount_id="KM100CP",
-            bom=("KM100CP", "PH2", 'TR-series Ø1/2" post'),
+            bom=("KM100CP",),
             default_kind=OpticKind.MIRROR,
         ),
         _mount_unit(
-            "sq-km-mirror",
-            "Kinematic square mirror",
+            "kmsr",
+            "Kinematic square mirror (KMSR)",
             category="Mirrors",
-            description='PFSQ10-03-P01 1" x 1" protected silver mirror (6 mm thick) in a KMSR compact kinematic mount, '
-            "on a pedestal base (PH2 + BE1 + CF125C).",
-            mounting=Mounting.PEDESTAL,
+            description='PFSQ10-03-P01 1" x 1" protected silver mirror (6 mm thick) in a KMSR compact kinematic '
+            f"mount, {ON_A_POST}.",
             prefix="M",
             mount_id="KMSR",
-            bom=("KMSR", "PFSQ10-03-P01", *BASE_BOM),
+            bom=("KMSR", "PFSQ10-03-P01"),
             default_kind=OpticKind.MIRROR,
         ),
         _mount_unit(
-            "mirror",
-            "Fixed mirror",
+            "fmp1",
+            "Fixed mirror (FMP1)",
             category="Mirrors",
-            description="FMP1 fixed mount on a pedestal base (PH2 + BE1 + CF125C).",
-            mounting=Mounting.PEDESTAL,
+            description=f"FMP1 fixed mount for Ø1\" optics, {ON_A_POST}. With a KB1X1 under it, it lifts off "
+            "and goes back repeatably (K).",
             prefix="M",
             mount_id="FMP1",
-            bom=("FMP1", *BASE_BOM),
+            bom=("FMP1",),
             default_kind=OpticKind.MIRROR,
         ),
-        _mount_unit(
-            "h-mirror",
-            "Fixed mirror, hole-mounted",
+        _post_unit(
+            "knife-edge",
+            "Knife-edge prism mirror (MRAK25)",
             category="Mirrors",
-            description="FMP1 fixed mount on a PH2 screwed into a hole.",
-            mounting=Mounting.HOLE,
-            prefix="M",
-            mount_id="FMP1",
-            bom=("FMP1", "PH2", 'TR-series Ø1/2" post'),
-            default_kind=OpticKind.MIRROR,
+            description="MRAK25-P01 knife-edge right-angle prism mirror on a KM100B kinematic platform, its edge over "
+            f"the post, {ON_A_POST}. Combines two beams arriving from opposite sides into neighbouring beams "
+            "leaving along the component's angle.",
+            prefix="KE",
+            bom=("MRAK25-P01", "KM100B"),
+            top=knife_edge_top,
         ),
-        _mount_unit(
-            "kb-mirror",
-            "Fixed mirror, magnetic base",
+        _post_unit(
+            "knife-edge-post",
+            "Knife-edge prism mirror (MRAK25), custom holder",
             category="Mirrors",
-            description="FMP1 fixed mount on a KB1X1 magnetic base, on a pedestal base (PH2 + BE1 + CF125C). "
-            "Lift it off and put it back with K.",
-            mounting=Mounting.PEDESTAL,
-            prefix="M",
-            mount_id="FMP1",
-            adapter_id="KB1X1",
-            bom=("FMP1", "KB1X1", *BASE_BOM),
-            default_kind=OpticKind.MIRROR,
-        ),
-        _mount_unit(
-            "kb-h-mirror",
-            "Fixed mirror, magnetic base, hole-mounted",
-            category="Mirrors",
-            description="FMP1 fixed mount on a KB1X1 magnetic base, on a PH2 screwed into a hole. "
-            "Lift it off and put it back with K.",
-            mounting=Mounting.HOLE,
-            prefix="M",
-            mount_id="FMP1",
-            adapter_id="KB1X1",
-            bom=("FMP1", "KB1X1", "PH2", 'TR-series Ø1/2" post'),
-            default_kind=OpticKind.MIRROR,
+            description="MRAK25-P01 knife-edge prism mirror in a machined holder on a post. The edge sits 4.5 mm "
+            "ahead of the post, so two beams fed along the post's column from opposite sides leave side by side, "
+            "9.0 mm apart, along the component's angle.",
+            prefix="KE",
+            bom=("MRAK25-P01", "Custom knife-edge holder (docs/custom-parts.md)"),
+            top=knife_edge_holder_top,
         ),
         *_pellicle_units(),
-        UnitType(
-            id="knife-edge",
-            name="Knife-edge prism mirror (MRAK25)",
-            category="Mirrors",
-            description="MRAK25-P01 knife-edge right-angle prism mirror on a KM100B kinematic platform, on a "
-            "pedestal base (PH2 + BE1 + CF125C), its edge over the post. Combines two beams arriving from "
-            "opposite sides into neighbouring beams leaving along the component's angle.",
-            mounting=Mounting.PEDESTAL,
-            label_prefix="KE",
-            bill_of_materials=("MRAK25-P01", "KM100B", *BASE_BOM),
-            builder=build_knife_edge,
-            fields=(FORK_ANGLE,),
-        ),
-        UnitType(
-            id="knife-edge-post",
-            name="Knife-edge prism mirror (MRAK25), custom holder, hole-mounted",
-            category="Mirrors",
-            description="MRAK25-P01 knife-edge prism mirror in a machined holder on a post, in a PH2 screwed into a "
-            "hole. The edge sits 4.5 mm ahead of the post, so two beams fed along the post's column from opposite "
-            "sides leave side by side, 9.0 mm apart, along the component's angle.",
-            mounting=Mounting.HOLE,
-            label_prefix="KE",
-            bill_of_materials=("MRAK25-P01", "Custom knife-edge holder (docs/custom-parts.md)", "PH2",
-                               'TR-series Ø1/2" post'),
-            builder=build_knife_edge_post,
-            fields=(THUMBSCREW_FIELD,),
-        ),
-        UnitType(
-            id="beam-dump",
-            name="Beam dump (LB1)",
-            category="Beam dumps",
-            description='Thorlabs LB1 beam dump on its Ø1/2" post, in a PH2 screwed into a hole. Its 1.4" x 0.7" '
-            "aperture faces the component's angle.",
-            mounting=Mounting.HOLE,
-            label_prefix="BB",
-            bill_of_materials=("LB1", "PH2"),
-            builder=build_beam_dump,
-            fields=(THUMBSCREW_FIELD,),
-        ),
-        UnitType(
-            id="pinhole-target",
-            name="Pinhole alignment target (custom), hole-mounted",
-            category="Apertures",
-            description="Machined plate with one or two pinholes on a post in a PH2 screwed into a hole: a fixed "
-            "checkpoint the beams must pass. Angle = the beams' direction.",
-            mounting=Mounting.HOLE,
-            label_prefix="T",
-            bill_of_materials=("Custom pinhole target (docs/custom-parts.md)", "PH2", 'TR-series Ø1/2" post'),
-            builder=build_target,
-            fields=(*TARGET_FIELDS, THUMBSCREW_FIELD),
-        ),
-        UnitType(
-            id="beam-block",
-            name="Beam block (custom)",
-            category="Beam dumps",
-            description='Black-anodized aluminium block, 1" x 1" x 3/8", on a post in a PH2 screwed into a hole, '
-            "for milliwatt stray beams where an LB1 does not fit. It faces the component's angle.",
-            mounting=Mounting.HOLE,
-            label_prefix="BB",
-            bill_of_materials=("Custom beam block (docs/custom-parts.md)", "PH2", 'TR-series Ø1/2" post'),
-            builder=partial(build_beam_dump, part_id="BLOCK"),
-            fields=(THUMBSCREW_FIELD,),
-        ),
-        UnitType(
-            id="iris",
-            name="Iris (ID25)",
-            category="Apertures",
-            description="ID25 iris diaphragm (Ø1–25 mm) on a pedestal base (PH2 + BE1 + CF125C). "
-            "Angle = the direction of the beam through it.",
-            mounting=Mounting.PEDESTAL,
-            label_prefix="I",
-            bill_of_materials=("ID25", *BASE_BOM),
-            builder=build_iris,
-            fields=(*IRIS_FIELDS, FORK_ANGLE),
-        ),
-        UnitType(
-            id="h-iris",
-            name="Iris (ID25), hole-mounted",
-            category="Apertures",
-            description="ID25 iris diaphragm (Ø1–25 mm) on a PH2 screwed into a hole. "
-            "Angle = the direction of the beam through it.",
-            mounting=Mounting.HOLE,
-            label_prefix="I",
-            bill_of_materials=("ID25", "PH2", 'TR-series Ø1/2" post'),
-            builder=build_iris,
-            fields=(*IRIS_FIELDS, THUMBSCREW_FIELD),
-        ),
         _mount_unit(
             "lens",
-            "Lens",
+            "Lens (FMP1)",
             category="Lenses",
-            description="Ø1\" lens in an FMP1 on a pedestal base (any FMP1 unit can hold a lens).",
-            mounting=Mounting.PEDESTAL,
+            description=f"Ø1\" lens in an FMP1, {ON_A_POST} (any FMP1 can hold a lens).",
             prefix="L",
             mount_id="FMP1",
-            bom=("FMP1", *BASE_BOM),
+            bom=("FMP1",),
             default_kind=OpticKind.LENS,
         ),
-        _mount_unit(
-            "h-lens",
-            "Lens, hole-mounted",
-            category="Lenses",
-            description="Ø1\" lens in an FMP1 on a PH2 screwed into a hole.",
-            mounting=Mounting.HOLE,
-            prefix="L",
-            mount_id="FMP1",
-            bom=("FMP1", "PH2", 'TR-series Ø1/2" post'),
-            default_kind=OpticKind.LENS,
-        ),
-        UnitType(
-            id="objective",
-            name="Reflective objective (LMM40X)",
+        _post_unit(
+            "objective",
+            "Reflective objective (LMM40X)",
             category="Objectives",
-            description="LMM40X-P01 40X reflective objective in an M1RMSS adapter, in a CP35 cage plate on a pedestal "
-            "base (PH2 + BE1 + CF125C). Angle = the direction it looks (toward the focus).",
-            mounting=Mounting.PEDESTAL,
-            label_prefix="OBJ",
-            bill_of_materials=("LMM40X-P01", "M1RMSS", "CP35", *BASE_BOM),
-            builder=build_objective,
-            fields=(*OBJECTIVE_FIELDS, FORK_ANGLE),
-        ),
-        UnitType(
-            id="h-objective",
-            name="Reflective objective (LMM40X), hole-mounted",
-            category="Objectives",
-            description="LMM40X-P01 40X reflective objective in an M1RMSS adapter, in a CP35 cage plate on a PH2 "
-            "screwed into a hole. Angle = the direction it looks (toward the focus).",
-            mounting=Mounting.HOLE,
-            label_prefix="OBJ",
-            bill_of_materials=("LMM40X-P01", "M1RMSS", "CP35", "PH2", 'TR-series Ø1/2" post'),
-            builder=build_objective,
+            description="LMM40X-P01 40X reflective objective in an M1RMSS adapter, in a CP35 cage plate, "
+            f"{ON_A_POST}. Angle = the direction it looks (toward the focus).",
+            prefix="OBJ",
+            bom=("LMM40X-P01", "M1RMSS", "CP35"),
+            top=objective_top,
             fields=OBJECTIVE_FIELDS,
         ),
-        UnitType(
-            id="collimator",
-            name="Fiber collimator",
+        _post_unit(
+            "iris",
+            "Iris (ID25)",
+            category="Apertures",
+            description=f"ID25 iris diaphragm (Ø1–25 mm), {ON_A_POST}. Angle = the direction of the beam through it.",
+            prefix="I",
+            bom=("ID25",),
+            top=iris_top,
+            fields=IRIS_FIELDS,
+        ),
+        _post_unit(
+            "pinhole-target",
+            "Pinhole alignment target (custom)",
+            category="Apertures",
+            description="Machined plate with one or two pinholes on a post: a fixed checkpoint the beams must pass. "
+            "Angle = the beams' direction.",
+            prefix="T",
+            bom=("Custom pinhole target (docs/custom-parts.md)",),
+            top=target_top,
+            fields=TARGET_FIELDS,
+        ),
+        _post_unit(
+            "beam-dump",
+            "Beam dump (LB1)",
+            category="Beam dumps",
+            description='Thorlabs LB1 beam dump on its Ø1/2" post. Its 1.4" x 0.7" aperture faces the component\'s '
+            "angle.",
+            prefix="BB",
+            bom=("LB1",),
+            top=beam_dump_top,
+        ),
+        _post_unit(
+            "beam-block",
+            "Beam block (custom)",
+            category="Beam dumps",
+            description='Black-anodized aluminium block, 1" x 1" x 3/8", on a post, for milliwatt stray beams where '
+            "an LB1 does not fit. It faces the component's angle.",
+            prefix="BB",
+            bom=("Custom beam block (docs/custom-parts.md)",),
+            top=partial(beam_dump_top, part_id="BLOCK"),
+        ),
+        _post_unit(
+            "collimator",
+            "Fiber collimator",
             category="Sources",
-            description="SM1ZB fiber z-translator hanging from a PH2, four ER cage rods (ER1.5 by default), CP35 cage plate with a Ø1\" lens.",
-            mounting=Mounting.HOLE,
-            label_prefix="FC",
-            bill_of_materials=("SM1ZB", "PH2", "ER rods ×4", "CP35", "Ø1\" lens", "SM1 fiber adapter"),
-            builder=build_collimator,
+            description="SM1ZB fiber z-translator hanging from its post, four ER cage rods (ER1.5 by default), "
+            f"CP35 cage plate with a Ø1\" lens; {ON_A_POST}.",
+            prefix="FC",
+            bom=("SM1ZB", "ER rods ×4", "CP35", "Ø1\" lens", "SM1 fiber adapter"),
+            top=collimator_top,
             orientation_part="SM1ZB",
             fields=(
                 ParamField("source.enabled", "Emit beam", "bool", True),
@@ -1600,6 +1720,22 @@ def _build_registry() -> dict[str, UnitType]:
             hole_anchor="Base centre",
         ),
         UnitType(
+            id="chopper",
+            name="Optical chopper head (MC2000B)",
+            category="Modulators",
+            description="MC2000B chopper head with a Ø4\" 10/100-slot blade. It stands on the table with no post: "
+            "screw it down through the two arc slots in its base, which catch two holes 3\" apart with the head "
+            "centred between them and let it turn ±30° there (it snaps to such spots). Angle = the beam direction "
+            "through the blade.",
+            mounting=Mounting.SLOTS,
+            label_prefix="CH",
+            bill_of_materials=("MC2000B chopper head", "Ø4\" 10/100-slot blade", '1/4"-20 cap screws ×2'),
+            builder=build_chopper,
+            fields=CHOPPER_FIELDS,
+            hole_anchor="Base centre",
+            slots=CHOPPER_SLOTS,
+        ),
+        UnitType(
             id="tslot-rail",
             name='T-slot rail, 1/2" (80/20)',
             category="Enclosure",
@@ -1647,26 +1783,14 @@ def _build_registry() -> dict[str, UnitType]:
             structural=True,
             preview_params=(("board.length_in", 1.25),),
         ),
-        UnitType(
-            id="base",
-            name="Pedestal base",
-            category="Bases",
-            description="PH2 post holder on a BE1 pedestal adapter, clamped with a CF125C fork.",
-            mounting=Mounting.PEDESTAL,
-            label_prefix="B",
-            bill_of_materials=BASE_BOM,
-            builder=build_base,
-            fields=(FORK_ANGLE,),
-        ),
     ]
     return {u.id: u for u in units}
 
 
 UNIT_TYPES: dict[str, UnitType] = _build_registry()
 CATEGORY_ORDER = (
-    "Sources", "Mirrors", "Beamsplitters", "Lenses", "Objectives", "Apertures", "Beam dumps", "Stages",
-    "Beam expanders", "Bases",
-    "Enclosure",
+    "Posts", "Sources", "Mirrors", "Beamsplitters", "Lenses", "Objectives", "Apertures", "Modulators", "Beam dumps",
+    "Stages", "Beam expanders", "Enclosure",
 )
 
 
@@ -1681,24 +1805,210 @@ def new_component_params(type_id: str) -> dict:
     return get_unit_type(type_id).default_params()
 
 
+def _merged(defaults: dict, params: dict) -> dict:
+    """``defaults`` overridden by ``params``, group by group (deep copies)."""
+    out = copy.deepcopy(defaults)
+    for key, value in params.items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = _merged(out[key], value)
+        else:
+            out[key] = copy.deepcopy(value)
+    return out
+
+
+def with_defaults(type_id: str, params: dict | None) -> dict:
+    """``params`` with ``type_id``'s defaults filled in where missing (a deep copy)."""
+    return _merged(new_component_params(type_id), params or {})
+
+
+# ---------------------------------------------------------- mounts on posts
+def post_params(comp: Component) -> dict:
+    """The parameters of ``comp``'s post (holder, clamp, KB1X1), without its mount's."""
+    return {key: copy.deepcopy(comp.params[key]) for key in POST_KEYS if key in comp.params}
+
+
+def mount_on_post_params(post: Component, type_id: str, mount_params: dict | None = None) -> dict:
+    """Parameters for ``type_id`` standing on ``post``: its own (defaults, or
+    ``mount_params``) with the post's holder, clamp and KB1X1 kept.  A mount
+    put on a KB1X1 sits on it."""
+    own = {key: value for key, value in (mount_params or {}).items() if key not in POST_KEYS}
+    params = _merged(with_defaults(type_id, own), post_params(post))
+    if has_kb1x1(post):
+        set_param(params, KB1X1_SEATED.key, True)
+    return params
+
+
+# --------------------------------------------------------- library entries
+@dataclass(frozen=True)
+class LibraryEntry:
+    """One item of the parts library: a unit type, possibly with preset parameters."""
+
+    key: str
+    type_id: str
+    name: str
+    category: str
+    description: str
+    params: tuple[tuple[str, Any], ...] = ()  # (dotted key, value) presets
+    kb1x1_only: bool = False  # dropped on a post, it adds a KB1X1 there instead of a mount
+
+    def initial_params(self, overrides: dict | None = None) -> dict:
+        """The unit's defaults with this entry's presets, then ``overrides`` (group by group)."""
+        params = new_component_params(self.type_id)
+        for key, value in self.params:
+            set_param(params, key, value)
+        return _merged(params, overrides or {})
+
+    @property
+    def mounts_on_posts(self) -> bool:
+        """Dropped on a post, it goes onto that post (a mount, or a KB1X1)."""
+        return self.kb1x1_only or (stands_on_post(self.type_id) and self.type_id != BARE_POST)
+
+
+def _library() -> dict[str, LibraryEntry]:
+    entries = [
+        LibraryEntry(
+            BARE_POST, BARE_POST, "Post", "Posts",
+            'Ø1/2" post in a PH2 post holder screwed into a hole. Drop mounts (or a KB1X1) onto it; '
+            "right-click to clamp it on a pedestal instead.",
+        ),
+        LibraryEntry(
+            "post-clamped", BARE_POST, "Clamped post", "Posts",
+            "Post holder on a BE1 pedestal, held down anywhere by a CF125C clamping fork that finds a hole by "
+            "itself. Right-click for the short CF038 clamp, or to turn the clamp.",
+            params=((BASE_KIND_FIELD.key, "clamped"),),
+        ),
+        LibraryEntry(
+            "kb1x1", BARE_POST, "KB1X1 magnetic base", "Posts",
+            "Drop it on a post, then the mount on top: the mount can then be lifted off and put back "
+            "repeatably (K). Dropped elsewhere, it comes on a new post.",
+            params=((KB1X1_PRESENT.key, True),),
+            kb1x1_only=True,
+        ),
+    ]
+    for unit in UNIT_TYPES.values():
+        if unit.id != BARE_POST:
+            entries.append(LibraryEntry(unit.id, unit.id, unit.name, unit.category, unit.description))
+    return {entry.key: entry for entry in entries}
+
+
+def library_entry(key: str) -> LibraryEntry:
+    """The library entry ``key``, or a plain one for any unit type id (an id
+    from an older version, e.g. "km-mirror", comes on the holder it had)."""
+    entry = LIBRARY.get(key)
+    if entry is not None:
+        return entry
+    if key in _LEGACY_TYPES:
+        type_id, holder, kb1x1 = _LEGACY_TYPES[key]
+        unit = get_unit_type(type_id)
+        presets = ((BASE_KIND_FIELD.key, holder), (KB1X1_PRESENT.key, kb1x1))
+        return LibraryEntry(key, type_id, unit.name, unit.category, unit.description, params=presets)
+    unit = get_unit_type(key)
+    return LibraryEntry(unit.id, unit.id, unit.name, unit.category, unit.description)
+
+
+def component_bom(comp: Component) -> tuple[str, ...]:
+    """Everything a component is built from, its post and holder included."""
+    unit = get_unit_type(comp.type)
+    if unit.mounting is not Mounting.POST:
+        return unit.bill_of_materials
+    holder = ["PH2", *(("BE1", P.clamp_spec(clamp_of(comp)).part_id) if is_clamped(comp) else ())]
+    return (*unit.bill_of_materials, *(("KB1X1",) if has_kb1x1(comp) else ()), *holder, 'TR-series Ø1/2" post')
+
+
+# ------------------------------------------------ files from older versions
+# Before layout format 2, the holder was part of the unit type (km-mirror on a
+# pedestal, km-h-mirror in a hole, kb-mirror with a KB1X1, ...).  Each old id:
+# (unit type now, holder, KB1X1).
+_LEGACY_TYPES: dict[str, tuple[str, str, bool]] = {
+    "km-mirror": ("km100", "clamped", False),
+    "km-h-mirror": ("km100cp", "hole", False),
+    "sq-km-mirror": ("kmsr", "clamped", False),
+    "mirror": ("fmp1", "clamped", False),
+    "h-mirror": ("fmp1", "hole", False),
+    "kb-mirror": ("fmp1", "clamped", True),
+    "kb-h-mirror": ("fmp1", "hole", True),
+    "h-lens": ("lens", "hole", False),
+    "h-iris": ("iris", "hole", False),
+    "h-objective": ("objective", "hole", False),
+    "base": (BARE_POST, "clamped", False),
+    "mag-km-pellicle": ("pellicle-km100bp", "clamped", True),
+    "mag-km-h-pellicle": ("pellicle-km100bp", "hole", True),
+    "mag-pellicle": ("pellicle-bp107", "clamped", True),
+    "mag-h-pellicle": ("pellicle-bp107", "hole", True),
+    "mag-km-pellicle-2in": ("pellicle-km200bp", "clamped", True),
+    "mag-km-h-pellicle-2in": ("pellicle-km200bp", "hole", True),
+    "mag-pellicle-2in": ("pellicle-bp207", "clamped", True),
+    "mag-h-pellicle-2in": ("pellicle-bp207", "hole", True),
+}
+# Unit types that kept their id: these stood on a pedestal base before version 2.
+_LEGACY_PEDESTAL_IDS = frozenset({"lens", "iris", "objective", "knife-edge"})
+
+
+def upgrade_component(comp: Component) -> Component:
+    """Bring a component from an older file (or clipboard) up to date; a
+    current one is returned unchanged."""
+    legacy = _LEGACY_TYPES.get(comp.type)
+    if legacy is not None:
+        type_id, holder, kb1x1 = legacy
+    elif stands_on_post(comp.type) and "base" not in comp.params:
+        type_id, kb1x1 = comp.type, False
+        holder = "clamped" if comp.type in _LEGACY_PEDESTAL_IDS else "hole"
+    else:
+        return comp
+    params = copy.deepcopy(comp.params)
+    fork = params.pop("fork", None)
+    old_angle = fork.get("angle") if isinstance(fork, dict) else None
+    set_param(params, BASE_KIND_FIELD.key, holder)
+    if holder == "clamped" and isinstance(old_angle, (int, float)):
+        # The old preference was relative to the unit; the clamp's direction is now on the table.
+        set_param(params, CLAMP_ANGLE_FIELD.key, round(normalize_angle(old_angle + comp.angle), 6))
+    set_param(params, KB1X1_PRESENT.key, kb1x1)
+    return Component(
+        id=comp.id,
+        type=type_id,
+        x=comp.x,
+        y=comp.y,
+        angle=comp.angle,
+        label=comp.label,
+        orientation=comp.orientation,
+        params=with_defaults(type_id, params),
+    )
+
+
+
 def catalog_parts() -> list[PlacedPart]:
     """Every distinct part orientation the catalog produces: each unit in each
-    orientation, with default parameters and with each on/off option flipped
-    (e.g. a mount lifted off its KB1X1), plus the pedestal clamping fork."""
+    orientation, with default parameters and with each on/off option flipped,
+    each post-mounted unit on each kind of holder, with and without a KB1X1
+    (its mount on it or lifted off), plus every clamping fork."""
     seen: dict[tuple, PlacedPart] = {}
+
+    def add(parts) -> None:
+        for part in parts:
+            seen.setdefault((part.part_id, part.prims, part.roll, part.z_offset), part)
+
     for unit in UNIT_TYPES.values():
         variants = [unit.default_params()]
         for f in unit.fields:
-            if f.kind == "bool":
+            if f.kind == "bool" and not f.key.startswith("kb1x1."):
                 params = unit.default_params()
                 set_param(params, f.key, not f.default)
+                variants.append(params)
+        if unit.mounting is Mounting.POST:
+            for holder, kb1x1, seated in (("clamped", False, True), ("hole", True, True), ("hole", True, False)):
+                params = unit.default_params()
+                set_param(params, BASE_KIND_FIELD.key, holder)
+                set_param(params, KB1X1_PRESENT.key, kb1x1)
+                set_param(params, KB1X1_SEATED.key, seated)
                 variants.append(params)
         for orientation in [name for name, _ in unit.orientations()] or [""]:
             for params in variants:
                 build = unit.build(Component("catalog", unit.id, orientation=orientation, params=params))
-                parts = build.parts + build.detached_parts
-                if unit.mounting is Mounting.PEDESTAL:
-                    parts += fork_parts(default_fork())
-                for part in parts:
-                    seen.setdefault((part.part_id, part.prims, part.roll, part.z_offset), part)
+                add(build.parts + build.detached_parts)
+    for clamp in P.CLAMPS:
+        add(fork_parts(default_fork(clamp)))
     return list(seen.values())
+
+
+UPGRADE_REGISTERED = register_component_upgrade(upgrade_component)
+LIBRARY: dict[str, LibraryEntry] = _library()

@@ -18,7 +18,7 @@ from dataclasses import dataclass, replace
 
 import numpy as np
 
-from olayout.catalog.units import Mounting, UnitBuild, get_unit_type
+from olayout.catalog.units import Mounting, UnitBuild, get_unit_type, mounting_of
 from olayout.core.geometry import Pose
 from olayout.core.layout import Component, Layout
 from olayout.engine.analysis import Analyzer
@@ -194,7 +194,7 @@ def plan_combiner(
             ex, ey = Pose(0.0, 0.0, angle).apply(element.center)
             x, y = point[0] - ex, point[1] - ey
             off_by = 0.0
-            if unit.mounting is Mounting.HOLE:
+            if mounting_of(trial) is Mounting.HOLE:
                 x, y = board.nearest_hole(x, y)
                 off_by = math.dist((x + ex, y + ey), point)
             candidate = replace(trial, x=float(x), y=float(y), angle=angle)

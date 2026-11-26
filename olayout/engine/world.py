@@ -19,10 +19,13 @@ from olayout.catalog.units import (
     ForkPlacement,
     PlacedPart,
     UnitBuild,
+    Mounting,
     UnitType,
     fork_footprint,
     fork_parts,
     get_unit_type,
+    mounting_of,
+    slot_screw_parts,
 )
 from olayout.core.geometry import Pose, as_polygonal, polygon_edges, transform_geometry
 from olayout.core.layout import Component
@@ -41,12 +44,14 @@ class WorldOptics:
 
 @dataclass
 class PlacedUnit:
-    """A component, its cached build and (for pedestals) its resolved fork."""
+    """A component, its cached build and how it is held down where it stands:
+    a clamped post's resolved fork, or the holes a slotted base is screwed to."""
 
     component: Component
     unit: UnitType
     build: UnitBuild
     fork: ForkPlacement | None = None
+    screws: tuple | None = None  # a slotted base: the world hole under each slot (None where there is none)
 
     @property
     def id(self) -> str:
@@ -56,9 +61,14 @@ class PlacedUnit:
     def pose(self) -> Pose:
         return self.component.pose
 
+    @property
+    def mounting(self) -> Mounting:
+        """How it is fastened: a post in a hole is ``HOLE``, a clamped one ``PEDESTAL``."""
+        return mounting_of(self.component)
+
     def _memo(self, kind: str, compute, *extra):
         cache = self.build.pose_cache
-        key = (kind, self.pose, self.fork, *extra)
+        key = (kind, self.pose, self.fork, self.screws, *extra)
         value = cache.get(key)
         if value is None:
             if len(cache) >= POSE_CACHE_LIMIT:
@@ -69,10 +79,13 @@ class PlacedUnit:
 
     @cached_property
     def parts(self) -> tuple[PlacedPart, ...]:
-        """All parts in the unit frame, including the clamping fork if any."""
-        if self.fork is None:
-            return self.build.parts
-        return self.build.parts + fork_parts(self.fork)
+        """All parts in the unit frame, including the clamping fork or the screws if any."""
+        parts = self.build.parts
+        if self.fork is not None:
+            parts += fork_parts(self.fork)
+        if self.screws:
+            parts += slot_screw_parts(self.pose, self.screws)
+        return parts
 
     @cached_property
     def local_footprints(self) -> dict[Layer, object]:
@@ -147,5 +160,7 @@ class BuildCache:
             self._cache[key] = build
         return build
 
-    def place(self, comp: Component, fork: ForkPlacement | None = None, key: tuple | None = None) -> PlacedUnit:
-        return PlacedUnit(comp, get_unit_type(comp.type), self.build(comp, key), fork)
+    def place(
+        self, comp: Component, fork: ForkPlacement | None = None, key: tuple | None = None, screws: tuple | None = None
+    ) -> PlacedUnit:
+        return PlacedUnit(comp, get_unit_type(comp.type), self.build(comp, key), fork, screws)
